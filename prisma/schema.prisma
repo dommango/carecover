@@ -1,0 +1,109 @@
+// CareCover data model. See docs/superpowers/specs for the design.
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Tier {
+  TIER1
+  TIER2
+}
+
+enum WindowStatus {
+  OPEN_TIER1
+  ESCALATED_TIER2
+  FILLED
+  CLOSED
+  EXPIRED
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model Respondent {
+  id              String   @id @default(cuid())
+  name            String
+  phone           String // E.164
+  tier            Tier
+  minShiftMinutes Int      @default(240) // tier-2 only; ignored for tier-1
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  assignments   Assignment[]
+  tokens        ResponseToken[]
+  notifications NotificationLog[]
+
+  @@index([tier, active])
+}
+
+model Window {
+  id              String       @id @default(cuid())
+  startsAt        DateTime
+  endsAt          DateTime
+  notes           String       @default("")
+  tier1DeadlineAt DateTime
+  status          WindowStatus @default(OPEN_TIER1)
+  createdAt       DateTime     @default(now())
+
+  assignments   Assignment[]
+  tokens        ResponseToken[]
+  notifications NotificationLog[]
+
+  @@index([status, tier1DeadlineAt])
+}
+
+// A covered block. Coverage = window interval minus union of assignments.
+// Remaining gaps are always derived, never stored.
+model Assignment {
+  id           String     @id @default(cuid())
+  window       Window     @relation(fields: [windowId], references: [id], onDelete: Cascade)
+  windowId     String
+  respondent   Respondent @relation(fields: [respondentId], references: [id])
+  respondentId String
+  tier         Tier
+  startsAt     DateTime
+  endsAt       DateTime
+  claimedAt    DateTime   @default(now())
+
+  @@index([windowId])
+}
+
+// Embedded in the SMS link so the response page identifies who + which window
+// without any login. Token stored hashed at rest.
+model ResponseToken {
+  id           String     @id @default(cuid())
+  window       Window     @relation(fields: [windowId], references: [id], onDelete: Cascade)
+  windowId     String
+  respondent   Respondent @relation(fields: [respondentId], references: [id])
+  respondentId String
+  tier         Tier
+  tokenHash    String     @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime   @default(now())
+
+  @@unique([windowId, respondentId])
+}
+
+model NotificationLog {
+  id                String             @id @default(cuid())
+  window            Window?            @relation(fields: [windowId], references: [id], onDelete: SetNull)
+  windowId          String?
+  respondent        Respondent?        @relation(fields: [respondentId], references: [id])
+  respondentId      String?
+  channel           String             @default("sms")
+  body              String
+  providerMessageId String?
+  status            NotificationStatus @default(QUEUED)
+  error             String?
+  sentAt            DateTime           @default(now())
+
+  @@index([windowId])
+}
