@@ -10,6 +10,7 @@
     "postinstall": "prisma generate",
     "cron": "node scripts/cron.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "links": "node scripts/links.mjs",
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "playwright test",
