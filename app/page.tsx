@@ -15,7 +15,7 @@ const STATUS_STYLES: Record<WindowSummary["status"], string> = {
 };
 
 const STATUS_LABEL: Record<WindowSummary["status"], string> = {
-  OPEN_TIER1: "Awaiting sisters",
+  OPEN_TIER1: "Awaiting family",
   ESCALATED_TIER2: "With caregivers",
   FILLED: "Filled",
   CLOSED: "Closed",
@@ -26,9 +26,11 @@ export default async function DashboardPage() {
   await requireAdmin();
   const windows = await getAdminWindows();
 
-  const now = new Date();
-  const defaultStart = toLocalInputValue(new Date(now.getTime() + 60 * 60 * 1000));
-  const defaultEnd = toLocalInputValue(new Date(now.getTime() + 5 * 60 * 60 * 1000));
+  // Default to the next quarter-hour so the values line up with the 15-minute step.
+  const QUARTER_HOUR = 15 * 60 * 1000;
+  const startBase = new Date(Math.ceil((Date.now() + 60 * 60 * 1000) / QUARTER_HOUR) * QUARTER_HOUR);
+  const defaultStart = toLocalInputValue(startBase);
+  const defaultEnd = toLocalInputValue(new Date(startBase.getTime() + 4 * 60 * 60 * 1000));
 
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-8">
@@ -53,6 +55,7 @@ export default async function DashboardPage() {
               type="datetime-local"
               name="startsAtLocal"
               defaultValue={defaultStart}
+              step={900}
               required
               className="rounded-md border border-black/15 px-3 py-2"
             />
@@ -63,6 +66,7 @@ export default async function DashboardPage() {
               type="datetime-local"
               name="endsAtLocal"
               defaultValue={defaultEnd}
+              step={900}
               required
               className="rounded-md border border-black/15 px-3 py-2"
             />
@@ -77,10 +81,11 @@ export default async function DashboardPage() {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-            <span className="font-medium">Sisters&apos; deadline (optional)</span>
+            <span className="font-medium">Family deadline (Tier 1, optional)</span>
             <input
               type="datetime-local"
               name="tier1DeadlineLocal"
+              step={900}
               className="rounded-md border border-black/15 px-3 py-2"
             />
             <span className="text-xs text-black/50">
@@ -89,7 +94,7 @@ export default async function DashboardPage() {
           </label>
           <div className="sm:col-span-2">
             <button className="rounded-md bg-black px-4 py-2 font-medium text-white">
-              Post &amp; text sisters
+              Post &amp; text family
             </button>
           </div>
         </form>
