@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { claimSchema } from "@/lib/validation";
 import { zonedWallTimeToUtc } from "@/lib/time";
 import { manualAssign } from "@/lib/admin";
+import { appRedirect } from "@/lib/http";
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   if (!(await isAdmin())) {
-    return NextResponse.redirect(new URL("/login", request.url), { status: 303 });
+    return appRedirect("/login");
   }
   const { id } = await ctx.params;
   const form = await request.formData();
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   });
 
   if (!respondentId || !parsed.success) {
-    return NextResponse.redirect(new URL(`/windows/${id}?error=assign`, request.url), { status: 303 });
+    return appRedirect(`/windows/${id}?error=assign`);
   }
 
   const result = await manualAssign(id, respondentId, {
@@ -26,7 +27,5 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   });
 
   const status = result.ok ? "assigned" : "assign";
-  return NextResponse.redirect(new URL(`/windows/${id}?${result.ok ? "ok" : "error"}=${status}`, request.url), {
-    status: 303,
-  });
+  return appRedirect(`/windows/${id}?${result.ok ? "ok" : "error"}=${status}`);
 }

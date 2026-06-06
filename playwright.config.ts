@@ -13,7 +13,9 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "PORT=3010 npm run start",
+    // APP_BASE_URL must match the test origin: redirects are built from it
+    // (so they resolve correctly behind a proxy), not from the request URL.
+    command: "APP_BASE_URL=http://localhost:3010 PORT=3010 npm run start",
     url: "http://localhost:3010/login",
     reuseExistingServer: true,
     timeout: 60_000,

@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
 import { destroyAdminSession } from "@/lib/auth";
+import { appRedirect } from "@/lib/http";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   await destroyAdminSession();
-  return NextResponse.redirect(new URL("/login", request.url), { status: 303 });
+  return appRedirect("/login");
 }
