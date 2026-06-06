@@ -1,22 +1,126 @@
 import { getResponseView } from "@/lib/windows";
-import { formatRange, formatTime, toLocalInputValue } from "@/lib/time";
+import { formatRange, formatTime, formatDate, toLocalInputValue } from "@/lib/time";
+import { Btn, Note, durLabel } from "@/components/ui";
+import { CoverageBar, type CovSegment } from "@/components/coverage-bar";
+import { CovLegend } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
 
-const STATUS_MESSAGE: Record<string, { text: string; tone: "good" | "bad" }> = {
-  claimed: { text: "Thanks — your time is locked in. ✅", tone: "good" },
-  declined: { text: "Got it, thanks for letting us know.", tone: "good" },
-  conflict: { text: "Sorry — someone just grabbed that time. Here's what's still open.", tone: "bad" },
-  invalid: { text: "That didn't look right. Please try again.", tone: "bad" },
+const COLUMN: React.CSSProperties = {
+  maxWidth: 430,
+  margin: "0 auto",
+  width: "100%",
+  minHeight: "100dvh",
+  padding: "28px 22px 36px",
+  background: "var(--sand)",
+  display: "flex",
+  flexDirection: "column",
 };
 
-function Shell({ children }: { children: React.ReactNode }) {
+/* A large round status seal — colored circle, white centered icon. */
+function BigSeal({ tone, icon }: { tone: "covered" | "gap"; icon: ReactNode }) {
+  const bg = tone === "covered" ? "var(--covered)" : "var(--gap)";
+  const shadow =
+    tone === "covered" ? "0 10px 28px rgba(122,160,107,.4)" : "0 10px 28px rgba(120,108,90,.28)";
   return (
-    <main className="mx-auto w-full max-w-md px-6 py-10">
-      <h1 className="mb-6 text-xl font-semibold">CareCover</h1>
-      {children}
+    <div
+      style={{
+        width: 88,
+        height: 88,
+        borderRadius: "50%",
+        background: bg,
+        color: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        margin: "0 auto 22px",
+        boxShadow: shadow,
+      }}
+    >
+      {icon}
+    </div>
+  );
+}
+
+function SealState({
+  tone,
+  icon,
+  title,
+  body,
+  footer,
+}: {
+  tone: "covered" | "gap";
+  icon: ReactNode;
+  title: string;
+  body: ReactNode;
+  footer?: ReactNode;
+}) {
+  return (
+    <main className="cc" style={COLUMN}>
+      <div style={{ marginTop: 34 }}>
+        <BigSeal tone={tone} icon={icon} />
+        <div
+          className="cc-serif"
+          style={{
+            fontSize: 29,
+            fontWeight: 500,
+            textAlign: "center",
+            lineHeight: 1.15,
+            letterSpacing: "-.3px",
+            color: "var(--ink)",
+          }}
+        >
+          {title}
+        </div>
+        <div
+          style={{
+            fontSize: 16.5,
+            color: "var(--ink-soft)",
+            fontWeight: 600,
+            textAlign: "center",
+            marginTop: 10,
+            textWrap: "pretty",
+          }}
+        >
+          {body}
+        </div>
+      </div>
+      {footer && <div style={{ marginTop: 24 }}>{footer}</div>}
     </main>
   );
+}
+
+function firstNameOf(name: string): string {
+  return name.split(/\s+/)[0] || name;
+}
+
+/** Subtract gaps from [startsAt,endsAt] to derive the covered ("Taken") pieces. */
+function coverageSegments(
+  startsAt: Date,
+  endsAt: Date,
+  gaps: { start: Date; end: Date }[],
+): CovSegment[] {
+  const sorted = [...gaps].sort((a, b) => a.start.getTime() - b.start.getTime());
+  const segs: CovSegment[] = [];
+  let cursor = startsAt.getTime();
+  for (const g of sorted) {
+    if (g.start.getTime() > cursor) {
+      segs.push({
+        start: new Date(cursor),
+        end: new Date(g.start.getTime()),
+        kind: "covered",
+        label: "Taken",
+      });
+    }
+    segs.push({ start: g.start, end: g.end, kind: "gap", label: "Open" });
+    cursor = Math.max(cursor, g.end.getTime());
+  }
+  if (cursor < endsAt.getTime()) {
+    segs.push({ start: new Date(cursor), end: endsAt, kind: "covered", label: "Taken" });
+  }
+  return segs;
 }
 
 export default async function RespondPage({
@@ -32,120 +136,336 @@ export default async function RespondPage({
 
   if (!view) {
     return (
-      <Shell>
-        <p className="text-black/70">This link isn&apos;t valid. Please ask for a new one.</p>
-      </Shell>
+      <SealState
+        tone="gap"
+        icon={<Icon.x width={42} height={42} />}
+        title="This link isn't valid"
+        body="Please ask whoever sent it for a fresh link."
+      />
     );
   }
 
-  const message = status ? STATUS_MESSAGE[status] : undefined;
-  const closed = view.expired || view.fullyCovered || view.status === "FILLED" || view.status === "CLOSED";
+  const firstName = firstNameOf(view.respondentName);
+  const closed =
+    view.expired || view.fullyCovered || view.status === "FILLED" || view.status === "CLOSED";
   const isTier2 = view.tier === "TIER2";
 
+  /* ---------- end states (gentle seals) ---------- */
+  if (status === "claimed") {
+    return (
+      <SealState
+        tone="covered"
+        icon={<Icon.check width={44} height={44} />}
+        title={`Thank you, ${firstName}.`}
+        body="You're all set — your time is locked in."
+        footer={
+          !view.fullyCovered ? (
+            <Note tone="calm" icon={<Icon.bell />}>
+              Other times may still need help. We&apos;ll text you if so.
+            </Note>
+          ) : (
+            <div
+              style={{
+                textAlign: "center",
+                fontSize: 14,
+                color: "var(--ink-faint)",
+                fontWeight: 600,
+              }}
+            >
+              You can close this page.
+            </div>
+          )
+        }
+      />
+    );
+  }
+
+  if (status === "declined") {
+    return (
+      <SealState
+        tone="gap"
+        icon={<Icon.check width={42} height={42} />}
+        title="Thanks for letting us know."
+        body="No worries at all — we&apos;ll find someone else."
+      />
+    );
+  }
+
+  if (closed) {
+    if (view.expired) {
+      return (
+        <SealState
+          tone="gap"
+          icon={<Icon.clock width={42} height={42} />}
+          title="This window has passed"
+          body={
+            <>
+              The time for{" "}
+              <b style={{ color: "var(--ink)" }}>{formatDate(view.startsAt)}</b> is no longer open
+              to claim.
+            </>
+          }
+        />
+      );
+    }
+    if (view.fullyCovered || view.status === "FILLED") {
+      return (
+        <SealState
+          tone="covered"
+          icon={<Icon.heart width={40} height={40} />}
+          title="All covered — thank you!"
+          body="This time is fully taken care of. No action needed from you."
+        />
+      );
+    }
+    // CLOSED
+    return (
+      <SealState
+        tone="gap"
+        icon={<Icon.clock width={42} height={42} />}
+        title="This window is closed."
+        body="There's nothing needed here right now."
+      />
+    );
+  }
+
+  /* ---------- active claim page ---------- */
+  const sub = isTier2
+    ? "A family you care for has an open shift. Here's what's available for you."
+    : "Someone's needed for this time. Can you take part of it?";
+
+  const covSegs = coverageSegments(view.startsAt, view.endsAt, view.gaps);
+
   return (
-    <Shell>
-      <p className="text-sm text-black/50">Hi {view.respondentName} —</p>
-      <h2 className="mt-1 text-lg font-medium">{formatRange(view.startsAt, view.endsAt)}</h2>
-      {view.notes && <p className="mt-1 text-black/60">{view.notes}</p>}
-
-      {message && (
-        <p
-          className={`mt-4 rounded-md px-3 py-2 text-sm ${
-            message.tone === "good" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"
-          }`}
+    <main className="cc" style={COLUMN}>
+      {/* Greeting */}
+      <div style={{ marginBottom: 16 }}>
+        <div
+          className="cc-serif"
+          style={{
+            fontSize: 27,
+            fontWeight: 500,
+            color: "var(--ink)",
+            letterSpacing: "-.2px",
+          }}
         >
-          {message.text}
-        </p>
-      )}
+          Hi {firstName},
+        </div>
+        <div
+          style={{ fontSize: 16, color: "var(--ink-soft)", fontWeight: 600, marginTop: 3 }}
+        >
+          {sub}
+        </div>
+      </div>
 
-      {closed ? (
-        <p className="mt-6 text-black/70">
-          {view.expired
-            ? "This request has expired."
-            : view.fullyCovered || view.status === "FILLED"
-              ? "This window is fully covered — nothing needed. Thank you!"
-              : "This window is closed."}
-        </p>
-      ) : (
-        <div className="mt-6 flex flex-col gap-4">
-          {view.actionableGaps.length === 0 && (
-            <p className="text-black/70">
-              {isTier2
-                ? "No open block currently matches your minimum shift."
-                : "Everything is currently covered."}
-            </p>
-          )}
+      {/* Window card */}
+      <div className="cc-card" style={{ padding: 18, marginBottom: 16 }}>
+        <div className="cc-row" style={{ gap: 12, marginBottom: covSegs.length ? 14 : 0 }}>
+          <div
+            style={{
+              flex: "0 0 auto",
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              background: "var(--accent-tint)",
+              color: "var(--accent)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Icon.clock width={22} height={22} />
+          </div>
+          <div>
+            <div
+              className="cc-serif"
+              style={{ fontSize: 21, fontWeight: 500, lineHeight: 1.15 }}
+            >
+              {formatDate(view.startsAt)}
+            </div>
+            <div
+              style={{
+                fontSize: 15.5,
+                fontWeight: 700,
+                color: "var(--ink-soft)",
+                marginTop: 2,
+              }}
+            >
+              {formatRange(view.startsAt, view.endsAt)}
+            </div>
+          </div>
+        </div>
 
-          {isTier2
-            ? view.actionableGaps.map((gap, i) => (
-                <form
-                  key={i}
-                  method="post"
-                  action={`/api/respond/${token}`}
-                  className="rounded-lg border border-black/10 p-4"
-                >
-                  <input type="hidden" name="action" value="claim" />
-                  <input type="hidden" name="startsAtLocal" value={toLocalInputValue(gap.start)} />
-                  <input type="hidden" name="endsAtLocal" value={toLocalInputValue(gap.end)} />
-                  <p className="mb-3 font-medium">
-                    {formatTime(gap.start)} – {formatTime(gap.end)}
-                  </p>
-                  <button className="w-full rounded-md bg-black px-3 py-2 font-medium text-white">
-                    Take this full block
-                  </button>
-                </form>
-              ))
-            : view.actionableGaps.map((gap, i) => (
-                <form
-                  key={i}
-                  method="post"
-                  action={`/api/respond/${token}`}
-                  className="rounded-lg border border-black/10 p-4"
-                >
-                  <input type="hidden" name="action" value="claim" />
-                  <p className="mb-2 text-sm text-black/60">
-                    Open: {formatTime(gap.start)} – {formatTime(gap.end)}. Cover all or part:
-                  </p>
-                  <div className="mb-3 grid grid-cols-2 gap-2">
-                    <label className="flex flex-col gap-1 text-xs">
-                      <span>From</span>
-                      <input
-                        type="datetime-local"
-                        name="startsAtLocal"
-                        min={toLocalInputValue(gap.start)}
-                        max={toLocalInputValue(gap.end)}
-                        step={900}
-                        defaultValue={toLocalInputValue(gap.start)}
-                        className="rounded-md border border-black/15 px-2 py-1.5"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1 text-xs">
-                      <span>To</span>
-                      <input
-                        type="datetime-local"
-                        name="endsAtLocal"
-                        min={toLocalInputValue(gap.start)}
-                        max={toLocalInputValue(gap.end)}
-                        step={900}
-                        defaultValue={toLocalInputValue(gap.end)}
-                        className="rounded-md border border-black/15 px-2 py-1.5"
-                      />
-                    </label>
-                  </div>
-                  <button className="w-full rounded-md bg-black px-3 py-2 font-medium text-white">
-                    Accept this time
-                  </button>
-                </form>
-              ))}
+        {view.notes && (
+          <div
+            style={{
+              fontSize: 15,
+              color: "var(--ink-soft)",
+              fontWeight: 600,
+              marginBottom: 14,
+              textWrap: "pretty",
+            }}
+          >
+            {view.notes}
+          </div>
+        )}
 
-          <form method="post" action={`/api/respond/${token}`}>
-            <input type="hidden" name="action" value="decline" />
-            <button className="w-full rounded-md border border-black/20 px-3 py-2 text-black/70 hover:bg-black/5">
-              Can&apos;t help with this one
-            </button>
-          </form>
+        <CoverageBar
+          startsAt={view.startsAt}
+          endsAt={view.endsAt}
+          segments={covSegs}
+          size="lg"
+          ticks
+        />
+        <div style={{ marginTop: 14 }}>
+          <CovLegend
+            items={[
+              { kind: "covered", label: "Already covered" },
+              { kind: "gap", label: "Still open" },
+            ]}
+          />
+        </div>
+      </div>
+
+      {/* conflict / invalid notices above the forms */}
+      {status === "conflict" && (
+        <div style={{ marginBottom: 14 }}>
+          <Note tone="bad">
+            Sorry — someone just grabbed that time. Here&apos;s what&apos;s still open.
+          </Note>
         </div>
       )}
-    </Shell>
+      {status === "invalid" && (
+        <div style={{ marginBottom: 14 }}>
+          <Note tone="bad">That didn&apos;t look right. Please try again.</Note>
+        </div>
+      )}
+
+      {/* claim controls */}
+      {view.actionableGaps.length === 0 ? (
+        <Note tone="calm" icon={<Icon.check />}>
+          {isTier2
+            ? "No open block currently matches your minimum shift."
+            : "Everything is currently covered."}
+        </Note>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {view.actionableGaps.map((gap, i) => {
+            const mins = (gap.end.getTime() - gap.start.getTime()) / 60000;
+            return isTier2 ? (
+              <form
+                key={i}
+                method="post"
+                action={`/api/respond/${token}`}
+                className="cc-card"
+                style={{ padding: 18 }}
+              >
+                <input type="hidden" name="action" value="claim" />
+                <input type="hidden" name="startsAtLocal" value={toLocalInputValue(gap.start)} />
+                <input type="hidden" name="endsAtLocal" value={toLocalInputValue(gap.end)} />
+                <div
+                  className="cc-row"
+                  style={{ justifyContent: "space-between", marginBottom: 12 }}
+                >
+                  <div>
+                    <div className="cc-field-label">OPEN SHIFT</div>
+                    <div
+                      className="cc-serif"
+                      style={{ fontSize: 22, fontWeight: 500, marginTop: 2 }}
+                    >
+                      {formatTime(gap.start)} – {formatTime(gap.end)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div
+                      style={{
+                        fontSize: 24,
+                        fontWeight: 800,
+                        color: "var(--accent-deep)",
+                        lineHeight: 1,
+                      }}
+                    >
+                      {durLabel(mins)}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <Note tone="calm" icon={<Icon.clock />}>
+                    Caregiver shifts are all-or-nothing — you&apos;d take the full block.
+                  </Note>
+                </div>
+                <Btn variant="primary" size="xl" block icon={<Icon.check />}>
+                  Accept this shift
+                </Btn>
+              </form>
+            ) : (
+              <form
+                key={i}
+                method="post"
+                action={`/api/respond/${token}`}
+                className="cc-card"
+                style={{ padding: 18 }}
+              >
+                <input type="hidden" name="action" value="claim" />
+                <div className="cc-field-label" style={{ marginBottom: 12 }}>
+                  Open: {formatTime(gap.start)} – {formatTime(gap.end)} · pick the part you can
+                  cover
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)",
+                    gap: 12,
+                    marginBottom: 16,
+                  }}
+                >
+                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <span className="cc-field-label">From</span>
+                    <input
+                      type="datetime-local"
+                      name="startsAtLocal"
+                      min={toLocalInputValue(gap.start)}
+                      max={toLocalInputValue(gap.end)}
+                      step={900}
+                      defaultValue={toLocalInputValue(gap.start)}
+                      required
+                      className="cc-input"
+                    />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <span className="cc-field-label">To</span>
+                    <input
+                      type="datetime-local"
+                      name="endsAtLocal"
+                      min={toLocalInputValue(gap.start)}
+                      max={toLocalInputValue(gap.end)}
+                      step={900}
+                      defaultValue={toLocalInputValue(gap.end)}
+                      required
+                      className="cc-input"
+                    />
+                  </label>
+                </div>
+                <Btn variant="primary" size="xl" block icon={<Icon.check />}>
+                  Accept this time
+                </Btn>
+              </form>
+            );
+          })}
+        </div>
+      )}
+
+      {/* decline — always available */}
+      <form
+        method="post"
+        action={`/api/respond/${token}`}
+        style={{ marginTop: 14 }}
+      >
+        <input type="hidden" name="action" value="decline" />
+        <Btn variant="ghost" block>
+          I can&apos;t this time
+        </Btn>
+      </form>
+    </main>
   );
 }

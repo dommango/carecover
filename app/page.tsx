@@ -1,136 +1,277 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/guard";
 import { getAdminWindows, type WindowSummary } from "@/lib/admin";
-import { formatRange, formatTime, toLocalInputValue } from "@/lib/time";
+import { formatDate, formatTime } from "@/lib/time";
 import { CoverageBar } from "@/components/coverage-bar";
+import { AdminShell } from "@/components/admin-shell";
+import { BtnLink, StatusBadge, windowBadge } from "@/components/ui";
+import { Icon } from "@/components/icons";
 
 export const dynamic = "force-dynamic";
 
-const STATUS_STYLES: Record<WindowSummary["status"], string> = {
-  OPEN_TIER1: "bg-blue-100 text-blue-800",
-  ESCALATED_TIER2: "bg-amber-100 text-amber-900",
-  FILLED: "bg-emerald-100 text-emerald-800",
-  CLOSED: "bg-gray-200 text-gray-700",
-  EXPIRED: "bg-gray-200 text-gray-700",
-};
+// Day-of-week eyebrow, with "TODAY ·" prefix when the window starts today.
+function dayEyebrow(d: Date): string {
+  const dow = d.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  return sameDay ? `TODAY · ${dow}` : dow;
+}
 
-const STATUS_LABEL: Record<WindowSummary["status"], string> = {
-  OPEN_TIER1: "Awaiting family",
-  ESCALATED_TIER2: "With caregivers",
-  FILLED: "Filled",
-  CLOSED: "Closed",
-  EXPIRED: "Expired",
-};
+function coverageCaption(w: WindowSummary): string {
+  const gapCount = w.gaps.length;
+  if (gapCount === 0) return `${w.coveredPercent}% covered · all set`;
+  const gapWord = gapCount === 1 ? "gap" : "gaps";
+  return `${w.coveredPercent}% covered · ${gapCount} ${gapWord} open`;
+}
+
+function deadlineMeta(w: WindowSummary): { label: string; value: string } {
+  switch (w.status) {
+    case "OPEN_TIER1":
+      return { label: "Escalates", value: formatDate(w.tier1DeadlineAt) };
+    case "ESCALATED_TIER2":
+      return { label: "With caregivers", value: "Awaiting replies" };
+    case "FILLED":
+      return { label: "Status", value: "All set" };
+    case "CLOSED":
+      return { label: "Status", value: "Closed" };
+    case "EXPIRED":
+      return { label: "Status", value: "Expired" };
+  }
+}
+
+function WindowRow({ w }: { w: WindowSummary }) {
+  const badge = windowBadge(w.status, w.coveredPercent, w.flaggedGaps.length > 0);
+  const deadline = deadlineMeta(w);
+
+  return (
+    <Link
+      href={`/windows/${w.id}`}
+      className="cc-card cc-dash-row"
+      style={{ textDecoration: "none", color: "inherit", padding: "18px 22px" }}
+    >
+      {/* WHEN */}
+      <div>
+        <div
+          style={{
+            fontSize: 12.5,
+            fontWeight: 700,
+            color: "var(--ink-faint)",
+            letterSpacing: ".3px",
+          }}
+        >
+          {dayEyebrow(w.startsAt)}
+        </div>
+        <div
+          className="cc-serif"
+          style={{ fontSize: 19, fontWeight: 500, lineHeight: 1.1, marginTop: 1 }}
+        >
+          {formatDate(w.startsAt)}
+        </div>
+        <div
+          className="cc-row"
+          style={{ gap: 5, marginTop: 3, fontSize: 13.5, fontWeight: 700, color: "var(--ink-soft)" }}
+        >
+          <Icon.clock width={14} height={14} style={{ color: "var(--accent)" }} />
+          {formatTime(w.startsAt)} – {formatTime(w.endsAt)}
+        </div>
+      </div>
+
+      {/* COVERAGE */}
+      <div>
+        <CoverageBar
+          startsAt={w.startsAt}
+          endsAt={w.endsAt}
+          assignments={w.assignments}
+          gaps={w.gaps}
+          size="sm"
+          ticks={false}
+        />
+        <div style={{ marginTop: 9, fontSize: 12.5, fontWeight: 700, color: "var(--ink-soft)" }}>
+          {coverageCaption(w)}
+        </div>
+        {w.notes && (
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: "var(--ink-faint)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {w.notes}
+          </div>
+        )}
+        {w.flaggedGaps.length > 0 && (
+          <div
+            className="cc-row"
+            style={{ gap: 6, marginTop: 6, fontSize: 12.5, fontWeight: 700, color: "var(--await-ink)" }}
+          >
+            <Icon.flag width={13} height={13} />
+            {w.flaggedGaps.length === 1
+              ? "1 gap too short to auto-offer"
+              : `${w.flaggedGaps.length} gaps too short to auto-offer`}
+          </div>
+        )}
+      </div>
+
+      {/* STATUS */}
+      <div>
+        <StatusBadge kind={badge.kind} label={badge.label} />
+      </div>
+
+      {/* NEXT DEADLINE */}
+      <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink-soft)" }}>
+        <div
+          style={{
+            fontSize: 11.5,
+            fontWeight: 700,
+            color: "var(--ink-faint)",
+            letterSpacing: ".3px",
+            textTransform: "uppercase",
+          }}
+        >
+          {deadline.label}
+        </div>
+        <div style={{ marginTop: 2 }}>{deadline.value}</div>
+      </div>
+
+      <Icon.chevR width={18} height={18} style={{ color: "var(--ink-faint)" }} />
+    </Link>
+  );
+}
 
 export default async function DashboardPage() {
   await requireAdmin();
   const windows = await getAdminWindows();
 
-  // Default to the next quarter-hour so the values line up with the 15-minute step.
-  const QUARTER_HOUR = 15 * 60 * 1000;
-  const startBase = new Date(Math.ceil((Date.now() + 60 * 60 * 1000) / QUARTER_HOUR) * QUARTER_HOUR);
-  const defaultStart = toLocalInputValue(startBase);
-  const defaultEnd = toLocalInputValue(new Date(startBase.getTime() + 4 * 60 * 60 * 1000));
+  const sub =
+    windows.length > 0
+      ? `${windows.length} window${windows.length === 1 ? "" : "s"} · sorted by what needs you soonest`
+      : undefined;
+
+  const actions = (
+    <BtnLink href="/windows/new" icon={<Icon.plus />}>
+      Post a window
+    </BtnLink>
+  );
+
+  if (windows.length === 0) {
+    return (
+      <AdminShell active="dash" title="Coverage" actions={actions}>
+        <div
+          style={{
+            minHeight: "60vh",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div style={{ textAlign: "center", maxWidth: 440 }}>
+            <div
+              style={{
+                width: 92,
+                height: 92,
+                borderRadius: "50%",
+                background: "var(--accent-tint)",
+                color: "var(--accent)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 24px",
+              }}
+            >
+              <Icon.cal width={40} height={40} />
+            </div>
+            <h2 className="cc-serif" style={{ fontSize: 28, fontWeight: 500, letterSpacing: "-.3px" }}>
+              Nothing needs coverage right now
+            </h2>
+            <p
+              style={{
+                fontSize: 16,
+                color: "var(--ink-soft)",
+                fontWeight: 600,
+                marginTop: 10,
+                lineHeight: 1.5,
+                textWrap: "pretty",
+              }}
+            >
+              When a time comes up that someone is needed, post it here. We&apos;ll text the family a
+              simple link — and reach trusted caregivers if a gap is left.
+            </p>
+            <div style={{ marginTop: 24, display: "inline-flex" }}>
+              <BtnLink href="/windows/new" variant="primary" size="xl" icon={<Icon.plus />}>
+                Post your first window
+              </BtnLink>
+            </div>
+          </div>
+        </div>
+      </AdminShell>
+    );
+  }
+
+  const needsYou = windows.filter((w) => w.flaggedGaps.length > 0).length;
+  const openGaps = windows.filter((w) => w.gaps.length > 0).length;
+  const allSet = windows.filter((w) => w.coveredPercent >= 100).length;
+
+  const stats: { n: number; l: string; tone: "attention" | "await" | "calm" }[] = [
+    { n: needsYou, l: needsYou === 1 ? "window needs you" : "windows need you", tone: "attention" },
+    { n: openGaps, l: openGaps === 1 ? "window with a gap" : "windows with gaps", tone: "await" },
+    { n: allSet, l: allSet === 1 ? "window fully covered" : "windows fully covered", tone: "calm" },
+  ];
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-8">
-      <header className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">CareCover</h1>
-        <nav className="flex items-center gap-4 text-sm">
-          <Link href="/respondents" className="text-blue-700 hover:underline">
-            Respondents
-          </Link>
-          <form method="post" action="/api/logout">
-            <button className="text-black/60 hover:underline">Sign out</button>
-          </form>
-        </nav>
-      </header>
-
-      <section className="mb-10 rounded-lg border border-black/10 p-5">
-        <h2 className="mb-4 text-lg font-medium">Post a coverage window</h2>
-        <form method="post" action="/api/windows" className="grid gap-4 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium">Start</span>
-            <input
-              type="datetime-local"
-              name="startsAtLocal"
-              defaultValue={defaultStart}
-              step={900}
-              required
-              className="rounded-md border border-black/15 px-3 py-2"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium">End</span>
-            <input
-              type="datetime-local"
-              name="endsAtLocal"
-              defaultValue={defaultEnd}
-              step={900}
-              required
-              className="rounded-md border border-black/15 px-3 py-2"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-            <span className="font-medium">Notes (what&apos;s needed)</span>
-            <input
-              type="text"
-              name="notes"
-              placeholder="e.g. lunch + meds, no driving"
-              className="rounded-md border border-black/15 px-3 py-2"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-            <span className="font-medium">Family deadline (Tier 1, optional)</span>
-            <input
-              type="datetime-local"
-              name="tier1DeadlineLocal"
-              step={900}
-              className="rounded-md border border-black/15 px-3 py-2"
-            />
-            <span className="text-xs text-black/50">
-              If left blank, caregivers are contacted automatically after the default window.
-            </span>
-          </label>
-          <div className="sm:col-span-2">
-            <button className="rounded-md bg-black px-4 py-2 font-medium text-white">
-              Post &amp; text family
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="flex flex-col gap-4">
-        <h2 className="text-lg font-medium">Windows</h2>
-        {windows.length === 0 && <p className="text-sm text-black/50">No windows yet.</p>}
-        {windows.map((w) => (
-          <Link
-            key={w.id}
-            href={`/windows/${w.id}`}
-            className="block rounded-lg border border-black/10 p-4 transition hover:border-black/30"
+    <AdminShell active="dash" title="Coverage" sub={sub} actions={actions}>
+      {/* summary strip */}
+      <div className="cc-dash-stats" style={{ marginBottom: 18 }}>
+        {stats.map((s, i) => (
+          <div
+            key={i}
+            className="cc-card"
+            style={{ padding: "15px 20px", display: "flex", alignItems: "center", gap: 14 }}
           >
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <span className="font-medium">{formatRange(w.startsAt, w.endsAt)}</span>
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[w.status]}`}>
-                {STATUS_LABEL[w.status]} · {w.coveredPercent}%
-              </span>
+            <div
+              style={{
+                fontSize: 34,
+                fontWeight: 800,
+                lineHeight: 1,
+                fontVariantNumeric: "tabular-nums",
+                color:
+                  s.tone === "attention"
+                    ? "var(--accent)"
+                    : s.tone === "await"
+                      ? "var(--await-ink)"
+                      : "var(--ink)",
+              }}
+            >
+              {s.n}
             </div>
-            {w.notes && <p className="mb-2 text-sm text-black/60">{w.notes}</p>}
-            <CoverageBar
-              startsAt={w.startsAt}
-              endsAt={w.endsAt}
-              assignments={w.assignments}
-              gaps={w.gaps}
-            />
-            {w.flaggedGaps.length > 0 && (
-              <p className="mt-2 text-xs text-red-600">
-                {w.flaggedGaps.length} gap(s) too short for caregivers —{" "}
-                {w.flaggedGaps.map((g) => `${formatTime(g.start)}–${formatTime(g.end)}`).join(", ")}
-              </p>
-            )}
-          </Link>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink-soft)", lineHeight: 1.25 }}>
+              {s.l}
+            </div>
+          </div>
         ))}
-      </section>
-    </main>
+      </div>
+
+      {/* column header (desktop) */}
+      <div className="cc-dash-head">
+        {["WHEN", "COVERAGE", "STATUS", "NEXT DEADLINE", ""].map((h, i) => (
+          <div key={i} className="cc-eyebrow" style={{ fontSize: 11 }}>
+            {h}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {windows.map((w) => (
+          <WindowRow key={w.id} w={w} />
+        ))}
+      </div>
+    </AdminShell>
   );
 }
