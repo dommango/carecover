@@ -1,10 +1,107 @@
-import Link from "next/link";
 import { requireAdmin } from "@/lib/guard";
 import { listRespondents } from "@/lib/respondents";
+import { AdminShell } from "@/components/admin-shell";
+import { Avatar, Btn, Note, TierLabel } from "@/components/ui";
+import { Icon } from "@/components/icons";
 
 export const dynamic = "force-dynamic";
 
-const fieldClass = "rounded-md border border-black/15 px-2 py-1.5 text-sm";
+type Respondent = Awaited<ReturnType<typeof listRespondents>>[number];
+
+function PersonCard({ r }: { r: Respondent }) {
+  return (
+    <form
+      method="post"
+      action={`/api/respondents/${r.id}`}
+      className="cc-card"
+      style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}
+    >
+      <div className="cc-row" style={{ gap: 13 }}>
+        <Avatar name={r.name} tier={r.tier} size="lg" />
+        <div style={{ flex: 1, minWidth: 0, lineHeight: 1.25 }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{r.name}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-faint)" }}>
+            {r.phone}
+          </div>
+        </div>
+        {r.tier === "TIER2" && (
+          <div style={{ textAlign: "right", flex: "0 0 auto" }}>
+            <div className="cc-eyebrow" style={{ fontSize: 10.5 }}>Min shift</div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "var(--caregiver-ink)", marginTop: 1 }}>
+              {Math.round(r.minShiftMinutes / 60)}h
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span className="cc-field-label">NAME</span>
+          <input name="name" defaultValue={r.name} className="cc-input" style={{ padding: "10px 12px", fontSize: 15 }} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span className="cc-field-label">PHONE</span>
+          <input name="phone" defaultValue={r.phone} className="cc-input" style={{ padding: "10px 12px", fontSize: 15 }} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span className="cc-field-label">TIER</span>
+          <select name="tier" defaultValue={r.tier} className="cc-input" style={{ padding: "10px 12px", fontSize: 15 }}>
+            <option value="TIER1">Family (Tier 1)</option>
+            <option value="TIER2">Caregiver (Tier 2)</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span className="cc-field-label">MIN SHIFT (MIN)</span>
+          <input
+            name="minShiftMinutes"
+            type="number"
+            min={15}
+            max={1440}
+            step={15}
+            defaultValue={r.minShiftMinutes}
+            className="cc-input"
+            style={{ padding: "10px 12px", fontSize: 15 }}
+          />
+        </label>
+      </div>
+
+      <div className="cc-row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <label className="cc-row" style={{ gap: 8, fontSize: 14, fontWeight: 600, color: "var(--ink-soft)" }}>
+          <input name="active" type="checkbox" defaultChecked={r.active} />
+          <span>Active</span>
+        </label>
+        <Btn variant="secondary" size="sm">Save</Btn>
+      </div>
+    </form>
+  );
+}
+
+function PersonGroup({
+  tier,
+  caption,
+  people,
+}: {
+  tier: "family" | "caregiver";
+  caption: string;
+  people: Respondent[];
+}) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div className="cc-row" style={{ justifyContent: "space-between", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
+        <TierLabel tier={tier} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-faint)" }}>{caption}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {people.length === 0 && (
+          <p style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-faint)" }}>No one here yet.</p>
+        )}
+        {people.map((r) => (
+          <PersonCard key={r.id} r={r} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default async function RespondentsPage({
   searchParams,
@@ -15,111 +112,80 @@ export default async function RespondentsPage({
   const { error } = await searchParams;
   const respondents = await listRespondents();
 
+  const family = respondents.filter((r) => r.tier === "TIER1");
+  const caregivers = respondents.filter((r) => r.tier === "TIER2");
+
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-8">
-      <header className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Respondents</h1>
-        <Link href="/" className="text-sm text-blue-700 hover:underline">
-          ← Windows
-        </Link>
-      </header>
+    <AdminShell active="roster" title="Roster" sub="The people we text when coverage is needed">
+      <div style={{ maxWidth: 1080, display: "flex", flexDirection: "column", gap: 24 }}>
+        {error === "phone" && (
+          <Note tone="bad" icon={<Icon.flag />}>That phone number didn&apos;t look valid.</Note>
+        )}
 
-      {error === "phone" && (
-        <p className="mb-4 text-sm text-red-600">That phone number didn&apos;t look valid.</p>
-      )}
-
-      <section className="mb-10 rounded-lg border border-black/10 p-5">
-        <h2 className="mb-4 text-lg font-medium">Add a respondent</h2>
-        <form
-          method="post"
-          action="/api/respondents"
-          className="grid grid-cols-2 gap-3 sm:grid-cols-5 sm:items-end"
-        >
-          <label className="col-span-2 flex flex-col gap-1 text-sm sm:col-span-1">
-            <span>Name</span>
-            <input name="name" required className={fieldClass} />
-          </label>
-          <label className="col-span-2 flex flex-col gap-1 text-sm sm:col-span-1">
-            <span>Phone</span>
-            <input name="phone" placeholder="555-123-4567" required className={fieldClass} />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span>Tier</span>
-            <select name="tier" defaultValue="TIER1" className={fieldClass}>
-              <option value="TIER1">Family (Tier 1)</option>
-              <option value="TIER2">Caregiver (Tier 2)</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span>Min (min)</span>
-            <input
-              name="minShiftMinutes"
-              type="number"
-              min={15}
-              max={1440}
-              step={15}
-              defaultValue={240}
-              className={fieldClass}
-            />
-          </label>
-          <input type="hidden" name="active" value="true" />
-          <button className="rounded-md bg-black px-3 py-2 text-sm font-medium text-white">
-            Add
-          </button>
-        </form>
-        <p className="mt-2 text-xs text-black/50">
-          Minimum shift applies to caregivers only — gaps shorter than this aren&apos;t texted to
-          them.
-        </p>
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Everyone</h2>
-        {respondents.length === 0 && <p className="text-sm text-black/50">No respondents yet.</p>}
-        {respondents.map((r) => (
+        {/* add a person */}
+        <div className="cc-card" style={{ padding: 22 }}>
+          <div className="cc-eyebrow" style={{ marginBottom: 16 }}>Add a person</div>
           <form
-            key={r.id}
             method="post"
-            action={`/api/respondents/${r.id}`}
-            className="grid grid-cols-2 items-end gap-3 rounded-md border border-black/10 p-3 sm:grid-cols-6"
+            action="/api/respondents"
+            style={{ display: "flex", flexDirection: "column", gap: 16 }}
           >
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs text-black/50">Name</span>
-              <input name="name" defaultValue={r.name} className={fieldClass} />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs text-black/50">Phone</span>
-              <input name="phone" defaultValue={r.phone} className={fieldClass} />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs text-black/50">Tier</span>
-              <select name="tier" defaultValue={r.tier} className={fieldClass}>
-                <option value="TIER1">Family (Tier 1)</option>
-                <option value="TIER2">Caregiver (Tier 2)</option>
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs text-black/50">Min (min)</span>
-              <input
-                name="minShiftMinutes"
-                type="number"
-                min={15}
-                max={1440}
-                step={15}
-                defaultValue={r.minShiftMinutes}
-                className={fieldClass}
-              />
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input name="active" type="checkbox" defaultChecked={r.active} />
-              <span className="text-xs text-black/50">Active</span>
-            </label>
-            <button className="rounded-md border border-black/20 px-3 py-2 text-sm font-medium hover:bg-black/5">
-              Save
-            </button>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                gap: 14,
+              }}
+            >
+              <label style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                <span className="cc-field-label">NAME</span>
+                <input name="name" required className="cc-input" />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                <span className="cc-field-label">PHONE</span>
+                <input name="phone" placeholder="555-123-4567" required className="cc-input" />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                <span className="cc-field-label">TIER</span>
+                <select name="tier" defaultValue="TIER1" className="cc-input">
+                  <option value="TIER1">Family (Tier 1)</option>
+                  <option value="TIER2">Caregiver (Tier 2)</option>
+                </select>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                <span className="cc-field-label">MIN SHIFT (MIN)</span>
+                <input
+                  name="minShiftMinutes"
+                  type="number"
+                  min={15}
+                  max={1440}
+                  step={15}
+                  defaultValue={240}
+                  className="cc-input"
+                />
+              </label>
+            </div>
+            <input type="hidden" name="active" value="true" />
+            <div className="cc-row" style={{ justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-faint)", lineHeight: 1.4, maxWidth: 460 }}>
+                Minimum shift applies to caregivers only — gaps shorter than this aren&apos;t texted to
+                them.
+              </p>
+              <Btn variant="primary" icon={<Icon.plus />}>Add a person</Btn>
+            </div>
           </form>
-        ))}
-      </section>
-    </main>
+        </div>
+
+        {/* grouped lists */}
+        {respondents.length === 0 ? (
+          <p style={{ fontSize: 15, fontWeight: 600, color: "var(--ink-faint)" }}>No one on the roster yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-7 md:grid-cols-2">
+            <PersonGroup tier="family" caption="Asked first · can take any part" people={family} />
+            <PersonGroup tier="caregiver" caption="Asked if a gap is left · whole shifts" people={caregivers} />
+          </div>
+        )}
+      </div>
+    </AdminShell>
   );
 }
