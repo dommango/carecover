@@ -1,18 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { claimSchema } from "@/lib/validation";
 import { zonedWallTimeToUtc } from "@/lib/time";
 import { claimViaToken, declineViaToken, notifyIfFilled } from "@/lib/windows";
+import { appRedirect } from "@/lib/http";
 
 // No-login endpoint: the token in the path authorizes the responder.
 export async function POST(request: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params;
   const form = await request.formData();
   const action = String(form.get("action") ?? "");
-  const back = (status: string) => new URL(`/r/${token}?status=${status}`, request.url);
+  const back = (status: string) => appRedirect(`/r/${token}?status=${status}`);
 
   if (action === "decline") {
     await declineViaToken(token);
-    return NextResponse.redirect(back("declined"), { status: 303 });
+    return back("declined");
   }
 
   const parsed = claimSchema.safeParse({
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ token:
     endsAtLocal: form.get("endsAtLocal"),
   });
   if (!parsed.success) {
-    return NextResponse.redirect(back("invalid"), { status: 303 });
+    return back("invalid");
   }
 
   const result = await claimViaToken(token, {
@@ -32,5 +33,5 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ token:
     await notifyIfFilled(result.windowId);
   }
 
-  return NextResponse.redirect(back(result.ok ? "claimed" : "conflict"), { status: 303 });
+  return back(result.ok ? "claimed" : "conflict");
 }

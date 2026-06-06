@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { respondentSchema } from "@/lib/validation";
 import { createRespondent } from "@/lib/respondents";
+import { appRedirect } from "@/lib/http";
 
 export async function POST(request: NextRequest) {
   if (!(await isAdmin())) {
-    return NextResponse.redirect(new URL("/login", request.url), { status: 303 });
+    return appRedirect("/login");
   }
 
   const form = await request.formData();
@@ -18,14 +19,14 @@ export async function POST(request: NextRequest) {
   });
 
   if (!parsed.success) {
-    return NextResponse.redirect(new URL("/respondents?error=1", request.url), { status: 303 });
+    return appRedirect("/respondents?error=1");
   }
 
   try {
     await createRespondent(parsed.data);
   } catch {
-    return NextResponse.redirect(new URL("/respondents?error=phone", request.url), { status: 303 });
+    return appRedirect("/respondents?error=phone");
   }
 
-  return NextResponse.redirect(new URL("/respondents", request.url), { status: 303 });
+  return appRedirect("/respondents");
 }

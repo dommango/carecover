@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { respondentSchema } from "@/lib/validation";
 import { updateRespondent } from "@/lib/respondents";
+import { appRedirect } from "@/lib/http";
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   if (!(await isAdmin())) {
-    return NextResponse.redirect(new URL("/login", request.url), { status: 303 });
+    return appRedirect("/login");
   }
 
   const { id } = await ctx.params;
@@ -19,14 +20,14 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   });
 
   if (!parsed.success) {
-    return NextResponse.redirect(new URL("/respondents?error=1", request.url), { status: 303 });
+    return appRedirect("/respondents?error=1");
   }
 
   try {
     await updateRespondent(id, parsed.data);
   } catch {
-    return NextResponse.redirect(new URL("/respondents?error=phone", request.url), { status: 303 });
+    return appRedirect("/respondents?error=phone");
   }
 
-  return NextResponse.redirect(new URL("/respondents", request.url), { status: 303 });
+  return appRedirect("/respondents");
 }

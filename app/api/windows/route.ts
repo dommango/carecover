@@ -1,13 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { createWindowSchema } from "@/lib/validation";
 import { zonedWallTimeToUtc } from "@/lib/time";
 import { createWindow } from "@/lib/windows";
+import { appRedirect } from "@/lib/http";
 
 export async function POST(request: NextRequest) {
   if (!(await isAdmin())) {
-    return NextResponse.redirect(new URL("/login", request.url), { status: 303 });
+    return appRedirect("/login");
   }
 
   const form = await request.formData();
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (!parsed.success) {
-    return NextResponse.redirect(new URL("/?error=window", request.url), { status: 303 });
+    return appRedirect("/?error=window");
   }
 
   const data = parsed.data;
@@ -34,5 +35,5 @@ export async function POST(request: NextRequest) {
     tier1DeadlineAt,
   });
 
-  return NextResponse.redirect(new URL("/", request.url), { status: 303 });
+  return appRedirect("/");
 }
