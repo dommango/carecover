@@ -1,4 +1,5 @@
 import { requireAdmin } from "@/lib/guard";
+import { prisma } from "@/lib/db";
 import { toLocalInputValue } from "@/lib/time";
 import { AdminShell } from "@/components/admin-shell";
 import { Btn, BtnLink } from "@/components/ui";
@@ -9,18 +10,49 @@ export const dynamic = "force-dynamic";
 
 const QUARTER_HOUR = 15 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
-export default async function NewWindowPage() {
+export default async function NewWindowPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ duplicate?: string }>;
+}) {
   await requireAdmin();
 
-  // Default to the next 15-minute boundary at least an hour out, +4h end.
-  // `Date.now()` is intentional on this force-dynamic page: defaults are computed
-  // fresh per request, never cached.
+  const { duplicate } = await searchParams;
+  let duplicateWindow = null;
+  if (duplicate) {
+    duplicateWindow = await prisma.window.findUnique({ where: { id: duplicate } });
+  }
+
+  // Defaults are computed fresh per request on this force-dynamic page.
   // eslint-disable-next-line react-hooks/purity
-  const startBase = new Date(Math.ceil((Date.now() + HOUR) / QUARTER_HOUR) * QUARTER_HOUR);
-  const endBase = new Date(startBase.getTime() + 4 * HOUR);
-  const defaultStart = toLocalInputValue(startBase);
-  const defaultEnd = toLocalInputValue(endBase);
+  const now = Date.now();
+
+  let previewStart: Date;
+  let previewEnd: Date;
+  let defaultStart: string;
+  let defaultEnd: string;
+  let defaultTier1Deadline: string;
+  let defaultNotes = "";
+
+  if (duplicateWindow) {
+    const originalStart = duplicateWindow.startsAt.getTime();
+    const offset = originalStart < now ? 7 * DAY : 0;
+    previewStart = new Date(originalStart + offset);
+    previewEnd = new Date(duplicateWindow.endsAt.getTime() + offset);
+    const shiftedDeadline = new Date(duplicateWindow.tier1DeadlineAt.getTime() + offset);
+    defaultStart = toLocalInputValue(previewStart);
+    defaultEnd = toLocalInputValue(previewEnd);
+    defaultTier1Deadline = toLocalInputValue(shiftedDeadline);
+    defaultNotes = duplicateWindow.notes;
+  } else {
+    previewStart = new Date(Math.ceil((now + HOUR) / QUARTER_HOUR) * QUARTER_HOUR);
+    previewEnd = new Date(previewStart.getTime() + 4 * HOUR);
+    defaultStart = toLocalInputValue(previewStart);
+    defaultEnd = toLocalInputValue(previewEnd);
+    defaultTier1Deadline = "";
+  }
 
   return (
     <AdminShell
@@ -79,6 +111,7 @@ export default async function NewWindowPage() {
               type="text"
               name="notes"
               placeholder="e.g. lunch + meds, no driving"
+              defaultValue={defaultNotes}
               className="cc-input"
             />
           </div>
@@ -94,6 +127,7 @@ export default async function NewWindowPage() {
               type="datetime-local"
               name="tier1DeadlineLocal"
               step={900}
+              defaultValue={defaultTier1Deadline}
               className="cc-input"
             />
             <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: "var(--ink-faint)", lineHeight: 1.45 }}>
@@ -143,10 +177,10 @@ export default async function NewWindowPage() {
           </div>
 
           <CoverageBar
-            startsAt={startBase}
-            endsAt={endBase}
+            startsAt={previewStart}
+            endsAt={previewEnd}
             size="lg"
-            segments={[{ start: startBase, end: endBase, kind: "gap", label: "Open to family first" }]}
+            segments={[{ start: previewStart, end: previewEnd, kind: "gap", label: "Open to family first" }]}
           />
 
           <div className="cc-divider" style={{ margin: "20px 0" }} />

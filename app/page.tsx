@@ -3,6 +3,8 @@ import { requireAdmin } from "@/lib/guard";
 import { getAdminWindows, type WindowSummary } from "@/lib/admin";
 import { formatDate, formatTime } from "@/lib/time";
 import { CoverageBar } from "@/components/coverage-bar";
+import { CalendarView } from "@/components/calendar-view";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { AdminShell } from "@/components/admin-shell";
 import { BtnLink, StatusBadge, windowBadge } from "@/components/ui";
 import { Icon } from "@/components/icons";
@@ -146,8 +148,14 @@ function WindowRow({ w }: { w: WindowSummary }) {
   );
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
   await requireAdmin();
+  const { view } = await searchParams;
+  const showCalendar = view === "calendar";
   const windows = await getAdminWindows();
 
   const sub =
@@ -155,10 +163,32 @@ export default async function DashboardPage() {
       ? `${windows.length} window${windows.length === 1 ? "" : "s"} · sorted by what needs you soonest`
       : undefined;
 
+  const hasActive = windows.some(
+    (w) => w.status === "OPEN_TIER1" || w.status === "ESCALATED_TIER2",
+  );
+
   const actions = (
-    <BtnLink href="/windows/new" icon={<Icon.plus />}>
-      Post a window
-    </BtnLink>
+    <div className="cc-row" style={{ gap: 10, flexWrap: "wrap" }}>
+      <div className="cc-seg-toggle">
+        <Link
+          href="/"
+          className={showCalendar ? "" : "is-on"}
+          style={{ textDecoration: "none" }}
+        >
+          List
+        </Link>
+        <Link
+          href="/?view=calendar"
+          className={showCalendar ? "is-on" : ""}
+          style={{ textDecoration: "none" }}
+        >
+          Calendar
+        </Link>
+      </div>
+      <BtnLink href="/windows/new" icon={<Icon.plus />}>
+        Post a window
+      </BtnLink>
+    </div>
   );
 
   if (windows.length === 0) {
@@ -267,11 +297,28 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {windows.map((w) => (
-          <WindowRow key={w.id} w={w} />
-        ))}
-      </div>
+      {hasActive && <AutoRefresh seconds={60} />}
+
+      {showCalendar ? (
+        <CalendarView windows={windows} />
+      ) : (
+        <>
+          {/* column header (desktop) */}
+          <div className="cc-dash-head">
+            {["WHEN", "COVERAGE", "STATUS", "NEXT DEADLINE", ""].map((h, i) => (
+              <div key={i} className="cc-eyebrow" style={{ fontSize: 11 }}>
+                {h}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {windows.map((w) => (
+              <WindowRow key={w.id} w={w} />
+            ))}
+          </div>
+        </>
+      )}
     </AdminShell>
   );
 }

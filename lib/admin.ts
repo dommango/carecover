@@ -147,6 +147,99 @@ export async function manualAssign(
 }
 
 /** Rotate and re-send response links to the respondents relevant to the window's stage. */
+export async function unassign(
+  windowId: string,
+  assignmentId: string,
+): Promise<{ ok: boolean }> {
+  try {
+    return await prisma.$transaction(
+      async (tx) => {
+        const assignment = await tx.assignment.findUnique({
+          where: { id: assignmentId },
+        });
+        if (!assignment || assignment.windowId !== windowId) {
+          return { ok: false as const };
+        }
+
+        await tx.assignment.delete({ where: { id: assignmentId } });
+
+        const window = await tx.window.findUniqueOrThrow({
+          where: { id: windowId },
+          include: { assignments: true },
+        });
+
+        const covered = coveredIntervals(window.assignments);
+        const gaps = computeGaps(windowInterval(window), covered);
+
+        if (window.status === "FILLED" && gaps.length > 0) {
+          const newStatus = window.tier1DeadlineAt > new Date() ? "OPEN_TIER1" : "ESCALATED_TIER2";
+          await tx.window.update({ where: { id: windowId }, data: { status: newStatus } });
+        }
+
+        return { ok: true as const };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  } catch {
+    return { ok: false };
+  }
+}
+
+export type EditWindowResult = { ok: true } | { ok: false; reason: string };
+
+export async function editWindow(
+  id: string,
+  {
+    startsAt,
+    endsAt,
+    notes,
+    tier1DeadlineAt,
+  }: {
+    startsAt: Date;
+    endsAt: Date;
+    notes: string;
+    tier1DeadlineAt: Date;
+  },
+): Promise<EditWindowResult> {
+  try {
+    return await prisma.$transaction(
+      async (tx) => {
+        const window = await tx.window.findUnique({
+          where: { id },
+          include: { assignments: true },
+        });
+        if (!window) return { ok: false as const, reason: "Window not found." };
+        if (window.assignments.length > 0) {
+          return { ok: false as const, reason: "Cannot edit a window that has assignments." };
+        }
+
+        await tx.window.update({
+          where: { id },
+          data: { startsAt, endsAt, notes, tier1DeadlineAt },
+        });
+
+        await tx.responseToken.updateMany({
+          where: { windowId: id },
+          data: { expiresAt: endsAt },
+        });
+
+        return { ok: true as const };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  } catch {
+    return { ok: false, reason: "Could not edit window — please retry." };
+  }
+}
+
+export async function getWindowNotifications(windowId: string) {
+  return prisma.notificationLog.findMany({
+    where: { windowId },
+    orderBy: { sentAt: "desc" },
+    include: { respondent: { select: { name: true } } },
+  });
+}
+
 export async function resendStageSms(windowId: string): Promise<number> {
   const window = await prisma.window.findUniqueOrThrow({
     where: { id: windowId },

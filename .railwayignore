@@ -1,0 +1,7 @@
+.git
+.claude
+node_modules
+.next
+generated
+test-results
+playwright-report

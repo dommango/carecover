@@ -88,6 +88,8 @@ export interface ResponseView {
   gaps: Interval[];
   /** Gaps this respondent may act on (tier-1: all; tier-2: only those meeting their minimum). */
   actionableGaps: Interval[];
+  /** Whether this respondent currently has an active assignment for this window. */
+  hasAssignment: boolean;
 }
 
 /** Build everything the no-login response page needs from a raw token, or null if unknown. */
@@ -110,6 +112,10 @@ export async function getResponseView(rawToken: string): Promise<ResponseView | 
       ? gaps.filter((g) => minutes(g) >= respondent.minShiftMinutes)
       : gaps;
 
+  const hasAssignment = window.assignments.some(
+    (a) => a.respondentId === respondent.id,
+  );
+
   return {
     windowId: window.id,
     status: window.status,
@@ -122,6 +128,7 @@ export async function getResponseView(rawToken: string): Promise<ResponseView | 
     fullyCovered: gaps.length === 0,
     gaps,
     actionableGaps,
+    hasAssignment,
   };
 }
 
@@ -206,6 +213,84 @@ export async function notifyIfFilled(windowId: string): Promise<void> {
       windowId,
     );
   }
+}
+
+export async function unclaimViaToken(rawToken: string): Promise<{ ok: boolean; reason?: string }> {
+  const token = await prisma.responseToken.findUnique({
+    where: { tokenHash: hashToken(rawToken) },
+    include: { respondent: true },
+  });
+  if (!token) return { ok: false, reason: "This link is not valid." };
+  if (token.revokedAt || token.expiresAt < new Date()) {
+    return { ok: false, reason: "This link has expired." };
+  }
+
+  const assignments = await prisma.assignment.findMany({
+    where: { windowId: token.windowId, respondentId: token.respondentId },
+  });
+  if (assignments.length === 0) {
+    return { ok: false, reason: "No active assignment found." };
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          await tx.assignment.deleteMany({
+            where: { windowId: token.windowId, respondentId: token.respondentId },
+          });
+
+          const window = await tx.window.findUniqueOrThrow({
+            where: { id: token.windowId },
+            include: { assignments: true },
+          });
+
+          const wasFilled = window.status === "FILLED";
+          const stillFilled = isFullyCovered(
+            windowInterval(window),
+            coveredIntervals(window.assignments),
+          );
+
+          if (wasFilled && !stillFilled) {
+            const newStatus =
+              window.tier1DeadlineAt > new Date() ? "OPEN_TIER1" : "ESCALATED_TIER2";
+            await tx.window.update({
+              where: { id: window.id },
+              data: { status: newStatus },
+            });
+          }
+
+          await tx.notificationLog.create({
+            data: {
+              windowId: token.windowId,
+              respondentId: token.respondentId,
+              channel: "event",
+              body: `${token.respondent.name} canceled their coverage`,
+              status: "SENT",
+            },
+          });
+
+          if (env.ADMIN_PHONE) {
+            const a = assignments[0];
+            await sendSms({
+              to: env.ADMIN_PHONE,
+              body: `CareCover: ${token.respondent.name} can no longer cover ${formatRange(a.startsAt, a.endsAt)}. The gap is now open.`,
+              windowId: token.windowId,
+              respondentId: null,
+            });
+          }
+
+          return { ok: true };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "P2034" && attempt < 2) continue;
+      throw error;
+    }
+  }
+  return { ok: false, reason: "Could not cancel due to contention. Please try again." };
 }
 
 /** Record a decline for the audit trail. Declining never blocks others. */

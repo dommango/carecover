@@ -4,6 +4,8 @@ import { Btn, Note, durLabel } from "@/components/ui";
 import { CoverageBar, type CovSegment } from "@/components/coverage-bar";
 import { CovLegend } from "@/components/ui";
 import { Icon } from "@/components/icons";
+import { PresetButtons } from "@/components/preset-buttons";
+import { UnclaimForm } from "@/components/unclaim-form";
 import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
@@ -159,22 +161,34 @@ export default async function RespondPage({
         title={`Thank you, ${firstName}.`}
         body="You're all set — your time is locked in."
         footer={
-          !view.fullyCovered ? (
-            <Note tone="calm" icon={<Icon.bell />}>
-              Other times may still need help. We&apos;ll text you if so.
-            </Note>
-          ) : (
-            <div
-              style={{
-                textAlign: "center",
-                fontSize: 14,
-                color: "var(--ink-faint)",
-                fontWeight: 600,
-              }}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <a
+              href={`/api/respond/${token}/calendar`}
+              download
+              className="cc-btn cc-btn--secondary cc-btn--block"
+              style={{ textDecoration: "none" }}
             >
-              You can close this page.
-            </div>
-          )
+              <Icon.cal />
+              Add to calendar
+            </a>
+            {view.hasAssignment && <UnclaimForm token={token} />}
+            {!view.fullyCovered ? (
+              <Note tone="calm" icon={<Icon.bell />}>
+                Other times may still need help. We&apos;ll text you if so.
+              </Note>
+            ) : (
+              <div
+                style={{
+                  textAlign: "center",
+                  fontSize: 14,
+                  color: "var(--ink-faint)",
+                  fontWeight: 600,
+                }}
+              >
+                You can close this page.
+              </div>
+            )}
+          </div>
         }
       />
     );
@@ -187,6 +201,28 @@ export default async function RespondPage({
         icon={<Icon.check width={42} height={42} />}
         title="Thanks for letting us know."
         body="No worries at all — we&apos;ll find someone else."
+      />
+    );
+  }
+
+  if (status === "unclaimed") {
+    return (
+      <SealState
+        tone="gap"
+        icon={<Icon.clock width={42} height={42} />}
+        title="We've let the coordinator know."
+        body="Your time is now open for someone else to claim."
+      />
+    );
+  }
+
+  if (status === "unclaim-error") {
+    return (
+      <SealState
+        tone="gap"
+        icon={<Icon.x width={42} height={42} />}
+        title="Couldn't cancel"
+        body="No active assignment was found. It may have already been removed."
       />
     );
   }
@@ -411,6 +447,7 @@ export default async function RespondPage({
                   Open: {formatTime(gap.start)} – {formatTime(gap.end)} · pick the part you can
                   cover
                 </div>
+                <PresetButtons index={i} gapStart={gap.start} gapEnd={gap.end} />
                 <div
                   style={{
                     display: "grid",
@@ -422,6 +459,7 @@ export default async function RespondPage({
                   <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <span className="cc-field-label">From</span>
                     <input
+                      id={`gap-${i}-start`}
                       type="datetime-local"
                       name="startsAtLocal"
                       min={toLocalInputValue(gap.start)}
@@ -435,6 +473,7 @@ export default async function RespondPage({
                   <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <span className="cc-field-label">To</span>
                     <input
+                      id={`gap-${i}-end`}
                       type="datetime-local"
                       name="endsAtLocal"
                       min={toLocalInputValue(gap.start)}

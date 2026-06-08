@@ -1,5 +1,5 @@
 import { requireAdmin } from "@/lib/guard";
-import { listRespondents } from "@/lib/respondents";
+import { listRespondents, getRespondentStats, type RespondentStats } from "@/lib/respondents";
 import { AdminShell } from "@/components/admin-shell";
 import { Avatar, Btn, Note, TierLabel } from "@/components/ui";
 import { Icon } from "@/components/icons";
@@ -8,7 +8,27 @@ export const dynamic = "force-dynamic";
 
 type Respondent = Awaited<ReturnType<typeof listRespondents>>[number];
 
-function PersonCard({ r }: { r: Respondent }) {
+function StatsLine({ stats }: { stats?: RespondentStats }) {
+  if (!stats) return null;
+  const rate = stats.invites > 0 ? Math.round((stats.claims / stats.invites) * 100) : 0;
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 12,
+        fontSize: 12.5,
+        fontWeight: 700,
+        color: "var(--ink-faint)",
+        marginTop: 2,
+      }}
+    >
+      <span>Claimed {stats.claims} of {stats.invites} shifts</span>
+      {stats.invites > 0 && <span>· {rate}% response rate</span>}
+    </div>
+  );
+}
+
+function PersonCard({ r, stats }: { r: Respondent; stats?: RespondentStats }) {
   return (
     <form
       method="post"
@@ -23,6 +43,7 @@ function PersonCard({ r }: { r: Respondent }) {
           <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-faint)" }}>
             {r.phone}
           </div>
+          <StatsLine stats={stats} />
         </div>
         {r.tier === "TIER2" && (
           <div style={{ textAlign: "right", flex: "0 0 auto" }}>
@@ -80,10 +101,12 @@ function PersonGroup({
   tier,
   caption,
   people,
+  statsMap,
 }: {
   tier: "family" | "caregiver";
   caption: string;
   people: Respondent[];
+  statsMap: Map<string, RespondentStats>;
 }) {
   return (
     <div style={{ minWidth: 0 }}>
@@ -96,7 +119,7 @@ function PersonGroup({
           <p style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-faint)" }}>No one here yet.</p>
         )}
         {people.map((r) => (
-          <PersonCard key={r.id} r={r} />
+          <PersonCard key={r.id} r={r} stats={statsMap.get(r.id)} />
         ))}
       </div>
     </div>
@@ -110,7 +133,8 @@ export default async function RespondentsPage({
 }) {
   await requireAdmin();
   const { error } = await searchParams;
-  const respondents = await listRespondents();
+  const [respondents, statsList] = await Promise.all([listRespondents(), getRespondentStats()]);
+  const statsMap = new Map(statsList.map((s) => [s.respondentId, s]));
 
   const family = respondents.filter((r) => r.tier === "TIER1");
   const caregivers = respondents.filter((r) => r.tier === "TIER2");
@@ -181,8 +205,8 @@ export default async function RespondentsPage({
           <p style={{ fontSize: 15, fontWeight: 600, color: "var(--ink-faint)" }}>No one on the roster yet.</p>
         ) : (
           <div className="grid grid-cols-1 gap-7 md:grid-cols-2">
-            <PersonGroup tier="family" caption="Asked first · can take any part" people={family} />
-            <PersonGroup tier="caregiver" caption="Asked if a gap is left · whole shifts" people={caregivers} />
+            <PersonGroup tier="family" caption="Asked first · can take any part" people={family} statsMap={statsMap} />
+            <PersonGroup tier="caregiver" caption="Asked if a gap is left · whole shifts" people={caregivers} statsMap={statsMap} />
           </div>
         )}
       </div>
