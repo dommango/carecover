@@ -150,7 +150,7 @@ export default async function RespondPage({
   const firstName = firstNameOf(view.respondentName);
   const closed =
     view.expired || view.fullyCovered || view.status === "FILLED" || view.status === "CLOSED";
-  const isTier2 = view.tier === "TIER2";
+  const wholeGapOnly = view.claimRule === "WHOLE_GAP";
 
   /* ---------- end states (gentle seals) ---------- */
   if (status === "claimed") {
@@ -266,8 +266,8 @@ export default async function RespondPage({
   }
 
   /* ---------- active claim page ---------- */
-  const sub = isTier2
-    ? "A family you care for has an open shift. Here's what's available for you."
+  const sub = wholeGapOnly
+    ? "There's an open shift you can take. Here's what's available."
     : "Someone's needed for this time. Can you take part of it?";
 
   const covSegs = coverageSegments(view.startsAt, view.endsAt, view.gaps);
@@ -380,15 +380,15 @@ export default async function RespondPage({
       {/* claim controls */}
       {view.actionableGaps.length === 0 ? (
         <Note tone="calm" icon={<Icon.check />}>
-          {isTier2
-            ? "No open block currently matches your minimum shift."
+          {wholeGapOnly
+            ? "No open block currently matches the minimum shift."
             : "Everything is currently covered."}
         </Note>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {view.actionableGaps.map((gap, i) => {
             const mins = (gap.end.getTime() - gap.start.getTime()) / 60000;
-            return isTier2 ? (
+            return wholeGapOnly ? (
               <form
                 key={i}
                 method="post"
@@ -427,7 +427,7 @@ export default async function RespondPage({
                 </div>
                 <div style={{ marginBottom: 16 }}>
                   <Note tone="calm" icon={<Icon.clock />}>
-                    Caregiver shifts are all-or-nothing — you&apos;d take the full block.
+                    This shift is all-or-nothing — you&apos;d take the full block.
                   </Note>
                 </div>
                 <Btn variant="primary" size="xl" block icon={<Icon.check />}>

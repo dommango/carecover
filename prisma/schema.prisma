@@ -8,14 +8,13 @@ datasource db {
   provider = "postgresql"
 }
 
-enum Tier {
-  TIER1
-  TIER2
+enum ClaimRule {
+  PARTIAL
+  WHOLE_GAP
 }
 
 enum WindowStatus {
-  OPEN_TIER1
-  ESCALATED_TIER2
+  OPEN
   FILLED
   CLOSED
   EXPIRED
@@ -27,55 +26,97 @@ enum NotificationStatus {
   FAILED
 }
 
+// A person in the global directory. Tier membership is per-window (WindowTierMember),
+// not a property of the person.
 model Respondent {
-  id              String   @id @default(cuid())
-  name            String
-  phone           String // E.164
-  tier            Tier
-  minShiftMinutes Int      @default(240) // tier-2 only; ignored for tier-1
-  active          Boolean  @default(true)
-  createdAt       DateTime @default(now())
+  id        String   @id @default(cuid())
+  name      String
+  phone     String // E.164
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
 
-  assignments   Assignment[]
-  tokens        ResponseToken[]
-  notifications NotificationLog[]
+  assignments     Assignment[]
+  tokens          ResponseToken[]
+  notifications   NotificationLog[]
+  tierMemberships WindowTierMember[]
 
-  @@index([tier, active])
+  @@index([active])
 }
 
 model Window {
-  id              String       @id @default(cuid())
-  startsAt        DateTime
-  endsAt          DateTime
-  notes           String       @default("")
-  tier1DeadlineAt DateTime
-  status          WindowStatus @default(OPEN_TIER1)
-  createdAt       DateTime     @default(now())
+  id        String       @id @default(cuid())
+  startsAt  DateTime
+  endsAt    DateTime
+  notes     String       @default("")
+  status    WindowStatus @default(OPEN)
+  // Index into the ordered `tiers` of the tier currently (and most recently) opened.
+  activeTierIndex Int    @default(0)
+  // Denormalized deadline of the active tier — when it passes, escalate to the next
+  // tier. Null once the last tier is active (no further escalation). Single source of
+  // truth maintained only by createWindow / runDeadlineEscalation.
+  currentTierDeadlineAt DateTime?
+  createdAt DateTime     @default(now())
 
+  tiers         WindowTier[]
   assignments   Assignment[]
   tokens        ResponseToken[]
   notifications NotificationLog[]
 
-  @@index([status, tier1DeadlineAt])
+  @@index([status, currentTierDeadlineAt])
+}
+
+// One rung of a window's escalation ladder. Ordered by `position` (0 = contacted first).
+model WindowTier {
+  id              String    @id @default(cuid())
+  window          Window    @relation(fields: [windowId], references: [id], onDelete: Cascade)
+  windowId        String
+  position        Int
+  label           String?
+  claimRule       ClaimRule
+  minShiftMinutes Int       @default(240) // WHOLE_GAP only; ignored for PARTIAL
+  // Absolute instant this tier escalates to the next. startsAt − leadHours at creation.
+  // Null for the last tier (terminal; stays claimable, never escalates).
+  deadlineAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  members     WindowTierMember[]
+  tokens      ResponseToken[]
+  assignments Assignment[]
+
+  @@unique([windowId, position])
+}
+
+// Which people belong to a given window-tier.
+model WindowTierMember {
+  id           String     @id @default(cuid())
+  windowTier   WindowTier @relation(fields: [windowTierId], references: [id], onDelete: Cascade)
+  windowTierId String
+  respondent   Respondent @relation(fields: [respondentId], references: [id], onDelete: Cascade)
+  respondentId String
+
+  @@unique([windowTierId, respondentId])
 }
 
 // A covered block. Coverage = window interval minus union of assignments.
 // Remaining gaps are always derived, never stored.
 model Assignment {
-  id           String     @id @default(cuid())
-  window       Window     @relation(fields: [windowId], references: [id], onDelete: Cascade)
+  id           String      @id @default(cuid())
+  window       Window      @relation(fields: [windowId], references: [id], onDelete: Cascade)
   windowId     String
-  respondent   Respondent @relation(fields: [respondentId], references: [id])
+  respondent   Respondent  @relation(fields: [respondentId], references: [id])
   respondentId String
-  tier         Tier
+  // The tier that filled this block. Null for admin manual assignments (no tier).
+  // Restrict: assignments are coverage history; a tier can't be deleted out from under one.
+  windowTier   WindowTier? @relation(fields: [windowTierId], references: [id], onDelete: Restrict)
+  windowTierId String?
   startsAt     DateTime
   endsAt       DateTime
-  claimedAt    DateTime   @default(now())
+  claimedAt    DateTime    @default(now())
 
   @@index([windowId])
 }
 
-// Embedded in the SMS link so the response page identifies who + which window
+// Embedded in the SMS link so the response page identifies who + which window-tier
 // without any login. Token stored hashed at rest.
 model ResponseToken {
   id           String     @id @default(cuid())
@@ -83,13 +124,14 @@ model ResponseToken {
   windowId     String
   respondent   Respondent @relation(fields: [respondentId], references: [id])
   respondentId String
-  tier         Tier
+  windowTier   WindowTier @relation(fields: [windowTierId], references: [id], onDelete: Cascade)
+  windowTierId String
   tokenHash    String     @unique
   expiresAt    DateTime
   revokedAt    DateTime?
   createdAt    DateTime   @default(now())
 
-  @@unique([windowId, respondentId])
+  @@unique([windowId, respondentId, windowTierId])
 }
 
 model NotificationLog {

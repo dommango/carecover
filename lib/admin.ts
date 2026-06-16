@@ -1,10 +1,10 @@
 import { prisma } from "@/lib/db";
 import {
   computeGaps,
-  escalationPlan,
   isFullyCovered,
   canClaim,
   minutes,
+  type ClaimRule,
   type Interval,
 } from "@/lib/coverage";
 import { Prisma, type Window } from "@/generated/prisma/client";
@@ -16,9 +16,23 @@ import { formatRange } from "@/lib/time";
 export interface AssignmentView {
   id: string;
   respondentName: string;
-  tier: "TIER1" | "TIER2";
+  /** Tier that filled this block; null for an admin manual assignment. */
+  tierLabel: string | null;
+  tierPosition: number | null;
   startsAt: Date;
   endsAt: Date;
+}
+
+export interface TierSummary {
+  id: string;
+  position: number;
+  label: string | null;
+  claimRule: ClaimRule;
+  minShiftMinutes: number;
+  deadlineAt: Date | null;
+  memberCount: number;
+  /** True for the tier currently (and most recently) opened. */
+  active: boolean;
 }
 
 export interface WindowSummary {
@@ -27,32 +41,61 @@ export interface WindowSummary {
   notes: string;
   startsAt: Date;
   endsAt: Date;
-  tier1DeadlineAt: Date;
+  activeTierIndex: number;
+  currentTierDeadlineAt: Date | null;
+  tiers: TierSummary[];
   assignments: AssignmentView[];
   gaps: Interval[];
   flaggedGaps: Interval[];
   coveredPercent: number;
 }
 
-function summarize(
-  window: {
+type WindowWithRelations = {
+  id: string;
+  status: Window["status"];
+  notes: string;
+  startsAt: Date;
+  endsAt: Date;
+  activeTierIndex: number;
+  currentTierDeadlineAt: Date | null;
+  tiers: {
     id: string;
-    status: Window["status"];
-    notes: string;
+    position: number;
+    label: string | null;
+    claimRule: ClaimRule;
+    minShiftMinutes: number;
+    deadlineAt: Date | null;
+    _count: { members: number };
+  }[];
+  assignments: {
+    id: string;
     startsAt: Date;
     endsAt: Date;
-    tier1DeadlineAt: Date;
-    assignments: { id: string; tier: "TIER1" | "TIER2"; startsAt: Date; endsAt: Date; respondent: { name: string } }[];
-  },
-  caregivers: { id: string; minShiftMinutes: number }[],
-): WindowSummary {
+    respondent: { name: string };
+    windowTier: { label: string | null; position: number } | null;
+  }[];
+};
+
+/**
+ * Gaps that no configured tier could ever fill: only possible when the ladder has
+ * no PARTIAL tier (any of which can take any sub-range) and the gap is shorter than
+ * the most permissive WHOLE_GAP tier's minimum.
+ */
+function computeFlaggedGaps(gaps: Interval[], tiers: WindowWithRelations["tiers"]): Interval[] {
+  if (tiers.some((t) => t.claimRule === "PARTIAL")) return [];
+  const wholeMins = tiers.filter((t) => t.claimRule === "WHOLE_GAP").map((t) => t.minShiftMinutes);
+  if (wholeMins.length === 0) return [];
+  const minMin = Math.min(...wholeMins);
+  return gaps.filter((g) => minutes(g) < minMin);
+}
+
+function summarize(window: WindowWithRelations): WindowSummary {
   const interval = windowInterval(window);
   const covered = coveredIntervals(window.assignments);
   const gaps = computeGaps(interval, covered);
   const total = minutes(interval);
   const remaining = gaps.reduce((sum, g) => sum + minutes(g), 0);
   const coveredPercent = total === 0 ? 100 : Math.round(((total - remaining) / total) * 100);
-  const flaggedGaps = escalationPlan(interval, covered, caregivers).gapsToFlag;
 
   return {
     id: window.id,
@@ -60,51 +103,59 @@ function summarize(
     notes: window.notes,
     startsAt: window.startsAt,
     endsAt: window.endsAt,
-    tier1DeadlineAt: window.tier1DeadlineAt,
+    activeTierIndex: window.activeTierIndex,
+    currentTierDeadlineAt: window.currentTierDeadlineAt,
+    tiers: window.tiers
+      .map((t) => ({
+        id: t.id,
+        position: t.position,
+        label: t.label,
+        claimRule: t.claimRule,
+        minShiftMinutes: t.minShiftMinutes,
+        deadlineAt: t.deadlineAt,
+        memberCount: t._count.members,
+        active: t.position === window.activeTierIndex && window.status === "OPEN",
+      }))
+      .sort((a, b) => a.position - b.position),
     assignments: window.assignments
       .map((a) => ({
         id: a.id,
         respondentName: a.respondent.name,
-        tier: a.tier,
+        tierLabel: a.windowTier?.label ?? null,
+        tierPosition: a.windowTier?.position ?? null,
         startsAt: a.startsAt,
         endsAt: a.endsAt,
       }))
       .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
     gaps,
-    flaggedGaps,
+    flaggedGaps: computeFlaggedGaps(gaps, window.tiers),
     coveredPercent,
   };
 }
 
+const summaryInclude = {
+  tiers: { include: { _count: { select: { members: true } } }, orderBy: { position: "asc" as const } },
+  assignments: { include: { respondent: true, windowTier: true } },
+};
+
 export async function getAdminWindows(): Promise<WindowSummary[]> {
-  const [windows, caregivers] = await Promise.all([
-    prisma.window.findMany({
-      orderBy: { startsAt: "desc" },
-      include: { assignments: { include: { respondent: true } } },
-    }),
-    prisma.respondent.findMany({ where: { tier: "TIER2", active: true } }),
-  ]);
-  return windows.map((w) => summarize(w, caregivers));
+  const windows = await prisma.window.findMany({
+    orderBy: { startsAt: "desc" },
+    include: summaryInclude,
+  });
+  return windows.map(summarize);
 }
 
 export async function getWindowDetail(id: string): Promise<WindowSummary | null> {
-  const [window, caregivers] = await Promise.all([
-    prisma.window.findUnique({
-      where: { id },
-      include: { assignments: { include: { respondent: true } } },
-    }),
-    prisma.respondent.findMany({ where: { tier: "TIER2", active: true } }),
-  ]);
-  return window ? summarize(window, caregivers) : null;
+  const window = await prisma.window.findUnique({ where: { id }, include: summaryInclude });
+  return window ? summarize(window) : null;
 }
 
 export async function closeWindow(id: string): Promise<void> {
   await prisma.window.update({ where: { id }, data: { status: "CLOSED" } });
 }
 
-export type ManualAssignResult =
-  | { ok: true; filled: boolean }
-  | { ok: false; reason: string };
+export type ManualAssignResult = { ok: true; filled: boolean } | { ok: false; reason: string };
 
 /** Admin override: assign a respondent to any free sub-range, bypassing tier rules. */
 export async function manualAssign(
@@ -123,14 +174,14 @@ export async function manualAssign(
           include: { assignments: true },
         });
         const covered = coveredIntervals(window.assignments);
-        const check = canClaim(windowInterval(window), covered, range, "TIER1");
+        const check = canClaim(windowInterval(window), covered, range, "PARTIAL");
         if (!check.ok) return { ok: false as const, reason: check.reason };
 
         await tx.assignment.create({
           data: {
             windowId,
             respondentId,
-            tier: respondent.tier,
+            windowTierId: null, // admin override is not tied to any tier
             startsAt: range.start,
             endsAt: range.end,
           },
@@ -146,17 +197,11 @@ export async function manualAssign(
   }
 }
 
-/** Rotate and re-send response links to the respondents relevant to the window's stage. */
-export async function unassign(
-  windowId: string,
-  assignmentId: string,
-): Promise<{ ok: boolean }> {
+export async function unassign(windowId: string, assignmentId: string): Promise<{ ok: boolean }> {
   try {
     return await prisma.$transaction(
       async (tx) => {
-        const assignment = await tx.assignment.findUnique({
-          where: { id: assignmentId },
-        });
+        const assignment = await tx.assignment.findUnique({ where: { id: assignmentId } });
         if (!assignment || assignment.windowId !== windowId) {
           return { ok: false as const };
         }
@@ -168,12 +213,11 @@ export async function unassign(
           include: { assignments: true },
         });
 
-        const covered = coveredIntervals(window.assignments);
-        const gaps = computeGaps(windowInterval(window), covered);
+        const gaps = computeGaps(windowInterval(window), coveredIntervals(window.assignments));
 
         if (window.status === "FILLED" && gaps.length > 0) {
-          const newStatus = window.tier1DeadlineAt > new Date() ? "OPEN_TIER1" : "ESCALATED_TIER2";
-          await tx.window.update({ where: { id: windowId }, data: { status: newStatus } });
+          // Re-open at whatever tier the ladder had reached; activeTierIndex is preserved.
+          await tx.window.update({ where: { id: windowId }, data: { status: "OPEN" } });
         }
 
         return { ok: true as const };
@@ -187,41 +231,46 @@ export async function unassign(
 
 export type EditWindowResult = { ok: true } | { ok: false; reason: string };
 
+/**
+ * Edit a window's times/notes. Only allowed before anyone has claimed. Tier deadlines
+ * are recomputed to preserve each tier's lead before the (possibly new) start time;
+ * the tier structure and membership themselves are fixed at creation.
+ */
 export async function editWindow(
   id: string,
-  {
-    startsAt,
-    endsAt,
-    notes,
-    tier1DeadlineAt,
-  }: {
-    startsAt: Date;
-    endsAt: Date;
-    notes: string;
-    tier1DeadlineAt: Date;
-  },
+  { startsAt, endsAt, notes }: { startsAt: Date; endsAt: Date; notes: string },
 ): Promise<EditWindowResult> {
   try {
     return await prisma.$transaction(
       async (tx) => {
         const window = await tx.window.findUnique({
           where: { id },
-          include: { assignments: true },
+          include: { assignments: true, tiers: { orderBy: { position: "asc" } } },
         });
         if (!window) return { ok: false as const, reason: "Window not found." };
         if (window.assignments.length > 0) {
           return { ok: false as const, reason: "Cannot edit a window that has assignments." };
         }
 
+        const shiftMs = startsAt.getTime() - window.startsAt.getTime();
+        for (const tier of window.tiers) {
+          if (tier.deadlineAt === null) continue;
+          await tx.windowTier.update({
+            where: { id: tier.id },
+            data: { deadlineAt: new Date(tier.deadlineAt.getTime() + shiftMs) },
+          });
+        }
+
+        const activeTier = window.tiers.find((t) => t.position === window.activeTierIndex);
+        const newCurrentDeadline =
+          activeTier?.deadlineAt != null ? new Date(activeTier.deadlineAt.getTime() + shiftMs) : null;
+
         await tx.window.update({
           where: { id },
-          data: { startsAt, endsAt, notes, tier1DeadlineAt },
+          data: { startsAt, endsAt, notes, currentTierDeadlineAt: newCurrentDeadline },
         });
 
-        await tx.responseToken.updateMany({
-          where: { windowId: id },
-          data: { expiresAt: endsAt },
-        });
+        await tx.responseToken.updateMany({ where: { windowId: id }, data: { expiresAt: endsAt } });
 
         return { ok: true as const };
       },
@@ -240,31 +289,51 @@ export async function getWindowNotifications(windowId: string) {
   });
 }
 
+/** Re-send response links to the members of the window's currently active tier. */
 export async function resendStageSms(windowId: string): Promise<number> {
   const window = await prisma.window.findUniqueOrThrow({
     where: { id: windowId },
-    include: { assignments: true },
+    include: {
+      assignments: true,
+      tiers: { include: { members: { include: { respondent: true } } }, orderBy: { position: "asc" } },
+    },
   });
-  if (window.status !== "OPEN_TIER1" && window.status !== "ESCALATED_TIER2") return 0;
+  if (window.status !== "OPEN") return 0;
 
-  const tier = window.status === "OPEN_TIER1" ? "TIER1" : "TIER2";
-  const recipients = await prisma.respondent.findMany({ where: { tier, active: true } });
+  const tier = window.tiers.find((t) => t.position === window.activeTierIndex);
+  if (!tier) return 0;
+
   const gaps = computeGaps(windowInterval(window), coveredIntervals(window.assignments));
+  const action = tier.claimRule === "PARTIAL" ? "accept all or part" : "accept a shift";
 
   let sent = 0;
-  for (const r of recipients) {
-    if (tier === "TIER2" && !gaps.some((g) => minutes(g) >= r.minShiftMinutes)) continue;
+  for (const member of tier.members) {
+    if (tier.claimRule === "WHOLE_GAP" && !gaps.some((g) => minutes(g) >= tier.minShiftMinutes)) {
+      continue;
+    }
     const { token, tokenHash } = generateToken();
     await prisma.responseToken.upsert({
-      where: { windowId_respondentId: { windowId, respondentId: r.id } },
-      create: { windowId, respondentId: r.id, tier, tokenHash, expiresAt: window.endsAt },
+      where: {
+        windowId_respondentId_windowTierId: {
+          windowId,
+          respondentId: member.respondentId,
+          windowTierId: tier.id,
+        },
+      },
+      create: {
+        windowId,
+        respondentId: member.respondentId,
+        windowTierId: tier.id,
+        tokenHash,
+        expiresAt: window.endsAt,
+      },
       update: { tokenHash, revokedAt: null, expiresAt: window.endsAt },
     });
     await sendSms({
-      to: r.phone,
+      to: member.respondent.phone,
       windowId,
-      respondentId: r.id,
-      body: `CareCover: reminder — coverage needed ${formatRange(window.startsAt, window.endsAt)}. Tap: ${responseLink(token)}`,
+      respondentId: member.respondentId,
+      body: `CareCover: reminder — coverage needed ${formatRange(window.startsAt, window.endsAt)}. Tap to ${action}: ${responseLink(token)}`,
     });
     sent++;
   }

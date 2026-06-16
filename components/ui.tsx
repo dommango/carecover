@@ -6,12 +6,24 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Icon } from "@/components/icons";
 
-type Tier = "TIER1" | "TIER2" | "family" | "caregiver";
-type WindowStatus = "OPEN_TIER1" | "ESCALATED_TIER2" | "FILLED" | "CLOSED" | "EXPIRED";
+type WindowStatus = "OPEN" | "FILLED" | "CLOSED" | "EXPIRED";
 
 /* ----------  helpers  ---------- */
-export function tierKind(tier: Tier): "family" | "caregiver" {
-  return tier === "TIER2" || tier === "caregiver" ? "caregiver" : "family";
+/**
+ * Map a tier's position to a color class ("tier-0".."tier-3", cycling). A null
+ * position is an admin manual assignment ("coordinator"). Drives avatar, segment,
+ * and label colors so each rung of a window's ladder is visually distinct.
+ */
+export function tierColorClass(position: number | null): string {
+  if (position === null || position === undefined) return "coordinator";
+  return `tier-${position % 4}`;
+}
+
+/** The solid CSS color var backing a tier color class, for ring/border styling. */
+export function tierColorVar(position: number | null): string {
+  return position === null || position === undefined
+    ? "var(--gap)"
+    : `var(--tier-${position % 4})`;
 }
 
 export function initialsFor(name: string): string {
@@ -125,16 +137,13 @@ export function windowBadge(
   status: WindowStatus,
   coveredPercent: number,
   hasFlaggedGap = false,
+  activeTierLabel?: string | null,
 ): { kind: BadgeKind; label: string } {
-  if (hasFlaggedGap && (status === "OPEN_TIER1" || status === "ESCALATED_TIER2"))
-    return { kind: "attention", label: "Needs you" };
+  if (hasFlaggedGap && status === "OPEN") return { kind: "attention", label: "Needs you" };
   switch (status) {
-    case "OPEN_TIER1":
-      return coveredPercent > 0
-        ? { kind: "await", label: "Partly covered" }
-        : { kind: "open", label: "Open to family" };
-    case "ESCALATED_TIER2":
-      return { kind: "escalated", label: "With caregivers" };
+    case "OPEN":
+      if (coveredPercent > 0) return { kind: "await", label: "Partly covered" };
+      return { kind: "open", label: activeTierLabel ? `Open to ${activeTierLabel}` : "Open" };
     case "FILLED":
       return { kind: "covered", label: "Fully covered" };
     case "CLOSED":
@@ -145,18 +154,13 @@ export function windowBadge(
 }
 
 /* ----------  Tier label  ---------- */
-export function TierLabel({ tier }: { tier: Tier }) {
-  if (tierKind(tier) === "caregiver")
-    return (
-      <span className="cc-tier cc-tier--caregiver">
-        <Icon.hand />
-        Paid caregiver
-      </span>
-    );
+export function TierLabel({ position, label }: { position: number | null; label?: string | null }) {
+  const cls = tierColorClass(position);
+  const text = label || (position === null ? "Coordinator" : `Tier ${position + 1}`);
   return (
-    <span className="cc-tier cc-tier--family">
-      <Icon.heart />
-      Family
+    <span className={`cc-tier cc-tier--${cls}`}>
+      {position === 0 ? <Icon.heart /> : position === null ? null : <Icon.hand />}
+      {text}
     </span>
   );
 }
@@ -164,35 +168,34 @@ export function TierLabel({ tier }: { tier: Tier }) {
 /* ----------  Avatar + person chip  ---------- */
 export function Avatar({
   name,
-  tier,
+  position,
   size,
   ring,
 }: {
   name: string;
-  tier: Tier;
+  position: number | null;
   size?: "sm" | "lg";
   ring?: boolean;
 }) {
-  const kind = tierKind(tier);
   const cls = [
     "cc-avatar",
-    `cc-avatar--${kind}`,
+    `cc-avatar--${tierColorClass(position)}`,
     size && `cc-avatar--${size}`,
     ring && "cc-avatar--ring",
   ]
     .filter(Boolean)
     .join(" ");
   return (
-    <div className={cls} style={ring ? { color: `var(--${kind})` } : undefined}>
+    <div className={cls} style={ring ? { color: tierColorVar(position) } : undefined}>
       {initialsFor(name)}
     </div>
   );
 }
 
-export function PersonChip({ name, tier }: { name: string; tier: Tier }) {
+export function PersonChip({ name, position }: { name: string; position: number | null }) {
   return (
     <span className="cc-chip">
-      <Avatar name={name} tier={tier} />
+      <Avatar name={name} position={position} />
       <span>{name.split(/\s+/)[0]}</span>
     </span>
   );

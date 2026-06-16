@@ -1,19 +1,28 @@
 import { type Interval } from "@/lib/coverage";
 import { formatTime } from "@/lib/time";
-import { tierKind } from "@/components/ui";
+import { tierColorClass } from "@/components/ui";
 
 // The central metaphor: a proportional timeline of a window. Covered blocks
-// (family = terracotta, caregiver = slate, "you" = sage) sit over a hatched
-// gray track that shows through as the remaining gaps. Warm design system.
+// (colored per tier position) sit over a hatched gray track that shows through
+// as the remaining gaps. Warm design system.
 
 interface AssignmentLike {
   startsAt: Date;
   endsAt: Date;
   respondentName: string;
-  tier: "TIER1" | "TIER2";
+  /** Tier that filled the block; null for an admin manual assignment. */
+  tierPosition: number | null;
 }
 
-type CovKind = "family" | "caregiver" | "covered" | "await" | "gap";
+type CovKind =
+  | "covered"
+  | "await"
+  | "gap"
+  | "coordinator"
+  | "tier-0"
+  | "tier-1"
+  | "tier-2"
+  | "tier-3";
 
 export interface CovSegment {
   start: Date;
@@ -64,7 +73,7 @@ export function CoverageBar({
       ...assignments.map((a) => ({
         start: a.startsAt,
         end: a.endsAt,
-        kind: tierKind(a.tier),
+        kind: tierColorClass(a.tierPosition) as CovKind,
         label: firstName(a.respondentName),
       })),
       ...gaps.map((g) => ({

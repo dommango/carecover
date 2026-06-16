@@ -1,10 +1,12 @@
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
+import { activeRespondents } from "@/lib/respondents";
 import { toLocalInputValue } from "@/lib/time";
 import { AdminShell } from "@/components/admin-shell";
 import { Btn, BtnLink } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { CoverageBar } from "@/components/coverage-bar";
+import { TierEditor, type InitialTier } from "@/components/tier-editor";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +22,15 @@ export default async function NewWindowPage({
   await requireAdmin();
 
   const { duplicate } = await searchParams;
-  let duplicateWindow = null;
-  if (duplicate) {
-    duplicateWindow = await prisma.window.findUnique({ where: { id: duplicate } });
-  }
+  const [respondents, duplicateWindow] = await Promise.all([
+    activeRespondents(),
+    duplicate
+      ? prisma.window.findUnique({
+          where: { id: duplicate },
+          include: { tiers: { include: { members: true }, orderBy: { position: "asc" } } },
+        })
+      : Promise.resolve(null),
+  ]);
 
   // Defaults are computed fresh per request on this force-dynamic page.
   // eslint-disable-next-line react-hooks/purity
@@ -33,25 +40,32 @@ export default async function NewWindowPage({
   let previewEnd: Date;
   let defaultStart: string;
   let defaultEnd: string;
-  let defaultTier1Deadline: string;
   let defaultNotes = "";
+  let initialTiers: InitialTier[] | undefined;
 
   if (duplicateWindow) {
     const originalStart = duplicateWindow.startsAt.getTime();
     const offset = originalStart < now ? 7 * DAY : 0;
     previewStart = new Date(originalStart + offset);
     previewEnd = new Date(duplicateWindow.endsAt.getTime() + offset);
-    const shiftedDeadline = new Date(duplicateWindow.tier1DeadlineAt.getTime() + offset);
     defaultStart = toLocalInputValue(previewStart);
     defaultEnd = toLocalInputValue(previewEnd);
-    defaultTier1Deadline = toLocalInputValue(shiftedDeadline);
     defaultNotes = duplicateWindow.notes;
+    initialTiers = duplicateWindow.tiers.map((t) => ({
+      label: t.label ?? "",
+      claimRule: t.claimRule,
+      minShiftMinutes: t.minShiftMinutes,
+      leadHours:
+        t.deadlineAt != null
+          ? String(Math.round((originalStart - t.deadlineAt.getTime()) / HOUR))
+          : "12",
+      memberIds: t.members.map((m) => m.respondentId),
+    }));
   } else {
     previewStart = new Date(Math.ceil((now + HOUR) / QUARTER_HOUR) * QUARTER_HOUR);
     previewEnd = new Date(previewStart.getTime() + 4 * HOUR);
     defaultStart = toLocalInputValue(previewStart);
     defaultEnd = toLocalInputValue(previewEnd);
-    defaultTier1Deadline = "";
   }
 
   return (
@@ -116,28 +130,19 @@ export default async function NewWindowPage({
             />
           </div>
 
-          <div>
-            <div className="cc-field-label" style={{ marginBottom: 10 }}>
-              GIVE FAMILY UNTIL…{" "}
-              <span style={{ color: "var(--ink-faint)", fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>
-                · then any gaps go to paid caregivers
-              </span>
-            </div>
-            <input
-              type="datetime-local"
-              name="tier1DeadlineLocal"
-              step={900}
-              defaultValue={defaultTier1Deadline}
-              className="cc-input"
-            />
-            <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: "var(--ink-faint)", lineHeight: 1.45 }}>
-              If left blank, caregivers are contacted automatically after the default window.
-            </div>
-          </div>
+          {/* fallback for the rare no-JS case: a single default tier the editor replaces */}
+          <noscript>
+            <input type="hidden" name="tiers[0][claimRule]" value="PARTIAL" />
+          </noscript>
+
+          <TierEditor
+            respondents={respondents.map((r) => ({ id: r.id, name: r.name }))}
+            initialTiers={initialTiers}
+          />
 
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
             <Btn variant="primary" size="xl" block icon={<Icon.send width={18} height={18} />}>
-              Post &amp; text the family
+              Post &amp; text the first tier
             </Btn>
             <BtnLink href="/" variant="ghost" block>
               Cancel
@@ -148,7 +153,7 @@ export default async function NewWindowPage({
         {/* ---- live preview ---- */}
         <div className="cc-card" style={{ padding: 24, alignSelf: "start" }}>
           <div className="cc-eyebrow" style={{ marginBottom: 16 }}>
-            What the family sees
+            How it works
           </div>
           <div className="cc-row" style={{ gap: 13, marginBottom: 18 }}>
             <div
@@ -171,7 +176,7 @@ export default async function NewWindowPage({
                 A new coverage window
               </div>
               <div style={{ fontSize: 14, color: "var(--ink-soft)", fontWeight: 700 }}>
-                Set the day &amp; time on the left
+                Set the day, time &amp; tiers on the left
               </div>
             </div>
           </div>
@@ -180,7 +185,7 @@ export default async function NewWindowPage({
             startsAt={previewStart}
             endsAt={previewEnd}
             size="lg"
-            segments={[{ start: previewStart, end: previewEnd, kind: "gap", label: "Open to family first" }]}
+            segments={[{ start: previewStart, end: previewEnd, kind: "gap", label: "Open to tier 1 first" }]}
           />
 
           <div className="cc-divider" style={{ margin: "20px 0" }} />
@@ -191,7 +196,7 @@ export default async function NewWindowPage({
                 <Icon.send width={18} height={18} />
               </span>
               <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-soft)", lineHeight: 1.4 }}>
-                Texts the family a link to claim any part.
+                Texts tier 1 a link to claim right away.
               </div>
             </div>
             <div className="cc-row" style={{ gap: 11, alignItems: "flex-start" }}>
@@ -199,7 +204,7 @@ export default async function NewWindowPage({
                 <Icon.clock width={18} height={18} />
               </span>
               <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-soft)", lineHeight: 1.4 }}>
-                Then any gaps go to caregivers who fit.
+                At each tier&apos;s deadline, remaining gaps cascade to the next tier.
               </div>
             </div>
           </div>

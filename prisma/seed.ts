@@ -10,13 +10,13 @@ async function main() {
   }
   await prisma.respondent.createMany({
     data: [
-      { name: "Family One", phone: "+15555550101", tier: "TIER1" },
-      { name: "Family Two", phone: "+15555550102", tier: "TIER1" },
-      { name: "Caregiver A", phone: "+15555550201", tier: "TIER2", minShiftMinutes: 240 },
-      { name: "Caregiver B", phone: "+15555550202", tier: "TIER2", minShiftMinutes: 120 },
+      { name: "Family One", phone: "+15555550101" },
+      { name: "Family Two", phone: "+15555550102" },
+      { name: "Caregiver A", phone: "+15555550201" },
+      { name: "Caregiver B", phone: "+15555550202" },
     ],
   });
-  console.log("Seeded 2 family (Tier 1) + 2 caregivers (Tier 2).");
+  console.log("Seeded 4 respondents. Tiers are configured per-window when posting one.");
 }
 
 main()
