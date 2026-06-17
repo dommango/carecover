@@ -7,22 +7,56 @@ const localDateTime = z
 export const respondentSchema = z.object({
   name: z.string().trim().min(1).max(80),
   phone: z.string().trim().min(7).max(20),
-  tier: z.enum(["TIER1", "TIER2"]),
-  minShiftMinutes: z.coerce.number().int().min(15).max(1440).default(240),
   active: z.coerce.boolean().default(true),
 });
 export type RespondentInput = z.infer<typeof respondentSchema>;
+
+export const tierConfigSchema = z.object({
+  label: z.string().trim().max(40).optional(),
+  claimRule: z.enum(["PARTIAL", "WHOLE_GAP"]),
+  minShiftMinutes: z.coerce.number().int().min(15).max(1440).default(240),
+  // Hours before the shift starts that this tier escalates to the next. Omitted
+  // for the last tier (terminal — never escalates).
+  leadHours: z.coerce.number().min(0).max(720).optional(),
+  respondentIds: z.array(z.string().cuid()).default([]),
+});
+export type TierConfigInput = z.infer<typeof tierConfigSchema>;
 
 export const createWindowSchema = z
   .object({
     startsAtLocal: localDateTime,
     endsAtLocal: localDateTime,
     notes: z.string().trim().max(500).default(""),
-    tier1DeadlineLocal: localDateTime.optional(),
+    tiers: z.array(tierConfigSchema).min(1, "At least one tier is required."),
   })
-  .refine((v) => v.endsAtLocal > v.startsAtLocal, {
-    message: "End must be after start.",
-    path: ["endsAtLocal"],
+  .superRefine((v, ctx) => {
+    if (v.endsAtLocal <= v.startsAtLocal) {
+      ctx.addIssue({ code: "custom", message: "End must be after start.", path: ["endsAtLocal"] });
+    }
+    v.tiers.forEach((tier, i) => {
+      const isLast = i === v.tiers.length - 1;
+      if (!isLast && (tier.leadHours === undefined || tier.leadHours === null)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Every tier except the last needs an escalation time.",
+          path: ["tiers", i, "leadHours"],
+        });
+      }
+    });
+    // Lead times must strictly decrease so deadlines are monotonic down the ladder.
+    for (let i = 1; i < v.tiers.length - 1; i++) {
+      const prev = v.tiers[i - 1].leadHours;
+      const cur = v.tiers[i].leadHours;
+      if (prev !== undefined && cur !== undefined && cur >= prev) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Each tier must escalate later than the one before it.",
+          path: ["tiers", i, "leadHours"],
+        });
+      }
+    }
+    // A respondent may appear in at most one tier of a window is NOT required:
+    // multi-tier membership is allowed (they get one link per tier).
   });
 export type CreateWindowInput = z.infer<typeof createWindowSchema>;
 

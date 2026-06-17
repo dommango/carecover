@@ -36,25 +36,48 @@ async function main() {
   });
   ok((bad.headers.get("location") ?? "").includes("error"), "bad password rejected");
 
-  // 2. Respondents
+  // 2. Respondents (plain people — no tier; tiers are per-window now)
   await fetch(`${BASE}/api/respondents`, {
     method: "POST",
     headers: headers(cookie),
-    body: form({ name: "Smoke Sister", phone: "555-100-2000", tier: "TIER1", active: "true" }),
+    body: form({ name: "Smoke Sister", phone: "555-100-2000", active: "true" }),
     redirect: "manual",
   });
   await fetch(`${BASE}/api/respondents`, {
     method: "POST",
     headers: headers(cookie),
-    body: form({ name: "Smoke CG", phone: "555-100-3000", tier: "TIER2", minShiftMinutes: "120", active: "true" }),
+    body: form({ name: "Smoke CG", phone: "555-100-3000", active: "true" }),
     redirect: "manual",
   });
 
-  // 3. Window (deadline left blank → default)
+  // Recover their ids to assign into tiers.
+  const idClient = new pg.Client({ connectionString: DB });
+  await idClient.connect();
+  const { rows: people } = await idClient.query(
+    `SELECT id, name FROM "Respondent" WHERE name IN ('Smoke Sister','Smoke CG')`,
+  );
+  await idClient.end();
+  const sisterId = people.find((p) => p.name === "Smoke Sister")?.id;
+  const cgId = people.find((p) => p.name === "Smoke CG")?.id;
+  ok(Boolean(sisterId && cgId), "respondents created and found");
+
+  // 3. Window with a 2-tier ladder: family (any part) → caregivers (whole gaps).
+  const winBody = new URLSearchParams();
+  winBody.set("startsAtLocal", "2026-07-20T09:00");
+  winBody.set("endsAtLocal", "2026-07-20T17:00");
+  winBody.set("notes", "Smoke test");
+  winBody.set("tiers[0][label]", "Family");
+  winBody.set("tiers[0][claimRule]", "PARTIAL");
+  winBody.set("tiers[0][leadHours]", "4");
+  winBody.append("tiers[0][respondentIds]", sisterId);
+  winBody.set("tiers[1][label]", "Caregivers");
+  winBody.set("tiers[1][claimRule]", "WHOLE_GAP");
+  winBody.set("tiers[1][minShiftMinutes]", "120");
+  winBody.append("tiers[1][respondentIds]", cgId);
   const win = await fetch(`${BASE}/api/windows`, {
     method: "POST",
     headers: headers(cookie),
-    body: form({ startsAtLocal: "2026-07-20T09:00", endsAtLocal: "2026-07-20T17:00", notes: "Smoke test" }),
+    body: winBody.toString(),
     redirect: "manual",
   });
   ok(win.status === 303, "window created");

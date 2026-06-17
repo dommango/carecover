@@ -50,6 +50,20 @@
   --caregiver-tint:#e8edf0;
   --caregiver-ink:#3f5360;
 
+  /* per-position tier palette (tier-0 = family, tier-1 = caregiver, +2 more, then cycles) */
+  --tier-0:      #d2694a;
+  --tier-0-tint: #f8e7df;
+  --tier-0-ink:  #8f3d28;
+  --tier-1:      #6d8190;
+  --tier-1-tint: #e8edf0;
+  --tier-1-ink:  #3f5360;
+  --tier-2:      #b08968;
+  --tier-2-tint: #f1e7dd;
+  --tier-2-ink:  #6f5238;
+  --tier-3:      #8a7aa8;
+  --tier-3-tint: #ece7f2;
+  --tier-3-ink:  #50436b;
+
   /* shape */
   --r-xs: 7px;
   --r-sm: 10px;
@@ -166,6 +180,11 @@ body {
 .cc-tier svg { width: 13px; height: 13px; }
 .cc-tier--family    { background: var(--family-tint); color: var(--family-ink); }
 .cc-tier--caregiver { background: var(--caregiver-tint); color: var(--caregiver-ink); }
+.cc-tier--tier-0    { background: var(--tier-0-tint); color: var(--tier-0-ink); }
+.cc-tier--tier-1    { background: var(--tier-1-tint); color: var(--tier-1-ink); }
+.cc-tier--tier-2    { background: var(--tier-2-tint); color: var(--tier-2-ink); }
+.cc-tier--tier-3    { background: var(--tier-3-tint); color: var(--tier-3-ink); }
+.cc-tier--coordinator { background: var(--gap-tint); color: var(--gap-ink); }
 
 /* =====================  PERSON CHIP + AVATAR  ===================== */
 .cc-avatar {
@@ -177,6 +196,11 @@ body {
 .cc-avatar--sm { width: 26px; height: 26px; font-size: 11px; }
 .cc-avatar--family    { background: var(--family); }
 .cc-avatar--caregiver { background: var(--caregiver); }
+.cc-avatar--tier-0    { background: var(--tier-0); }
+.cc-avatar--tier-1    { background: var(--tier-1); }
+.cc-avatar--tier-2    { background: var(--tier-2); }
+.cc-avatar--tier-3    { background: var(--tier-3); }
+.cc-avatar--coordinator { background: var(--gap); }
 .cc-avatar--ring { box-shadow: 0 0 0 2px var(--card), 0 0 0 3.5px currentColor; }
 
 .cc-chip {
@@ -205,6 +229,11 @@ body {
 .cc-seg--covered  { background: var(--covered); color: #fff; }
 .cc-seg--family   { background: var(--family); color: #fff; }
 .cc-seg--caregiver{ background: var(--caregiver); color: #fff; }
+.cc-seg--tier-0   { background: var(--tier-0); color: #fff; }
+.cc-seg--tier-1   { background: var(--tier-1); color: #fff; }
+.cc-seg--tier-2   { background: var(--tier-2); color: #fff; }
+.cc-seg--tier-3   { background: var(--tier-3); color: #fff; }
+.cc-seg--coordinator { background: var(--gap-ink); color: #fff; }
 .cc-seg--await    { background: var(--await); color: #fff; }
 /* gap = hatched, calm gray (the track shows through, but add texture) */
 .cc-seg--gap {

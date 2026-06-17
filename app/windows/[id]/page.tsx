@@ -13,7 +13,8 @@ import {
   StatusBadge,
   windowBadge,
   Avatar,
-  CovLegend,
+  TierLabel,
+  durLabel,
   Note,
 } from "@/components/ui";
 
@@ -34,14 +35,14 @@ export default async function WindowDetailPage({
 
   const notifications = await getWindowNotifications(id);
   const respondents = (await listRespondents()).filter((r) => r.active);
-  const active = w.status === "OPEN_TIER1" || w.status === "ESCALATED_TIER2";
+  const active = w.status === "OPEN";
+  const activeTier = w.tiers.find((t) => t.position === w.activeTierIndex);
   const assignFrom = w.gaps[0]?.start ?? w.startsAt;
   const assignTo = w.gaps[0]?.end ?? w.endsAt;
   const windowMin = toLocalInputValue(w.startsAt);
   const windowMax = toLocalInputValue(w.endsAt);
 
-  const badge = windowBadge(w.status, w.coveredPercent, w.flaggedGaps.length > 0);
-  const deadlineUpcoming = w.status === "OPEN_TIER1";
+  const badge = windowBadge(w.status, w.coveredPercent, w.flaggedGaps.length > 0, activeTier?.label);
   const isFlagged = (g: { start: Date; end: Date }) =>
     w.flaggedGaps.some(
       (f) => f.start.getTime() === g.start.getTime() && f.end.getTime() === g.end.getTime(),
@@ -140,19 +141,19 @@ export default async function WindowDetailPage({
               style={{ justifyContent: "space-between", marginBottom: 18, gap: 12, flexWrap: "wrap" }}
             >
               <StatusBadge kind={badge.kind} label={badge.label} />
-              {deadlineUpcoming ? (
+              {active && w.currentTierDeadlineAt ? (
                 <span
                   className="cc-row"
                   style={{ gap: 6, fontSize: 13.5, fontWeight: 700, color: "var(--ink-soft)" }}
                 >
                   <Icon.clock width={15} height={15} style={{ color: "var(--accent)" }} />
-                  Caregivers at {formatTime(w.tier1DeadlineAt)}, {formatDate(w.tier1DeadlineAt)}
+                  Next tier at {formatTime(w.currentTierDeadlineAt)}, {formatDate(w.currentTierDeadlineAt)}
                 </span>
-              ) : (
+              ) : active ? (
                 <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink-faint)" }}>
-                  Deadline passed {formatDate(w.tier1DeadlineAt)}
+                  Final tier — awaiting replies
                 </span>
-              )}
+              ) : null}
             </div>
 
             <CoverageBar
@@ -165,14 +166,30 @@ export default async function WindowDetailPage({
               tickStepHours={2}
             />
 
-            <div style={{ marginTop: 16 }}>
-              <CovLegend
-                items={[
-                  { kind: "family", label: "Family" },
-                  { kind: "caregiver", label: "Caregiver" },
-                  { kind: "gap", label: "Still open" },
-                ]}
-              />
+            <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="cc-eyebrow">Escalation ladder</div>
+              {w.tiers.map((t) => (
+                <div
+                  key={t.id}
+                  className="cc-row"
+                  style={{
+                    justifyContent: "space-between",
+                    gap: 10,
+                    opacity: !active || t.active || t.position < w.activeTierIndex ? 1 : 0.55,
+                  }}
+                >
+                  <div className="cc-row" style={{ gap: 10, minWidth: 0 }}>
+                    <TierLabel position={t.position} label={t.label} />
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink-faint)" }}>
+                      {t.claimRule === "PARTIAL" ? "any part" : `whole gaps ≥ ${durLabel(t.minShiftMinutes)}`}
+                      {t.memberCount > 0 ? ` · ${t.memberCount}` : " · nobody"}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink-soft)", whiteSpace: "nowrap" }}>
+                    {t.active ? "active now" : t.deadlineAt ? `→ ${formatTime(t.deadlineAt)}` : "last resort"}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -272,19 +289,6 @@ export default async function WindowDetailPage({
                 </div>
                 <div>
                   <div className="cc-field-label" style={{ marginBottom: 6 }}>
-                    GIVE FAMILY UNTIL
-                  </div>
-                  <input
-                    type="datetime-local"
-                    name="tier1DeadlineLocal"
-                    step={900}
-                    defaultValue={toLocalInputValue(w.tier1DeadlineAt)}
-                    className="cc-input"
-                    required
-                  />
-                </div>
-                <div>
-                  <div className="cc-field-label" style={{ marginBottom: 6 }}>
                     NOTES
                   </div>
                   <input
@@ -321,7 +325,7 @@ export default async function WindowDetailPage({
                   <select name="respondentId" className="cc-input">
                     {respondents.map((r) => (
                       <option key={r.id} value={r.id}>
-                        {r.name} ({r.tier === "TIER1" ? "family" : "caregiver"})
+                        {r.name}
                       </option>
                     ))}
                   </select>
@@ -389,7 +393,7 @@ export default async function WindowDetailPage({
                       style={{ justifyContent: "space-between", padding: "11px 0", gap: 10 }}
                     >
                       <div className="cc-row" style={{ gap: 11, minWidth: 0 }}>
-                        <Avatar name={a.respondentName} tier={a.tier} />
+                        <Avatar name={a.respondentName} position={a.tierPosition} />
                         <div style={{ lineHeight: 1.2, minWidth: 0 }}>
                           <div
                             style={{
@@ -403,7 +407,7 @@ export default async function WindowDetailPage({
                             {a.respondentName}
                           </div>
                           <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-faint)" }}>
-                            {a.tier === "TIER1" ? "Family" : "Paid caregiver"}
+                            {a.tierLabel ?? (a.tierPosition === null ? "Coordinator" : `Tier ${a.tierPosition + 1}`)}
                           </div>
                         </div>
                       </div>

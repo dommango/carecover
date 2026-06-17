@@ -29,12 +29,16 @@ function coverageCaption(w: WindowSummary): string {
   return `${w.coveredPercent}% covered · ${gapCount} ${gapWord} open`;
 }
 
+function activeTier(w: WindowSummary) {
+  return w.tiers.find((t) => t.position === w.activeTierIndex);
+}
+
 function deadlineMeta(w: WindowSummary): { label: string; value: string } {
   switch (w.status) {
-    case "OPEN_TIER1":
-      return { label: "Escalates", value: formatDate(w.tier1DeadlineAt) };
-    case "ESCALATED_TIER2":
-      return { label: "With caregivers", value: "Awaiting replies" };
+    case "OPEN":
+      return w.currentTierDeadlineAt
+        ? { label: "Escalates", value: formatDate(w.currentTierDeadlineAt) }
+        : { label: "Final tier", value: "Awaiting replies" };
     case "FILLED":
       return { label: "Status", value: "All set" };
     case "CLOSED":
@@ -45,7 +49,7 @@ function deadlineMeta(w: WindowSummary): { label: string; value: string } {
 }
 
 function WindowRow({ w }: { w: WindowSummary }) {
-  const badge = windowBadge(w.status, w.coveredPercent, w.flaggedGaps.length > 0);
+  const badge = windowBadge(w.status, w.coveredPercent, w.flaggedGaps.length > 0, activeTier(w)?.label);
   const deadline = deadlineMeta(w);
 
   return (
@@ -163,9 +167,7 @@ export default async function DashboardPage({
       ? `${windows.length} window${windows.length === 1 ? "" : "s"} · sorted by what needs you soonest`
       : undefined;
 
-  const hasActive = windows.some(
-    (w) => w.status === "OPEN_TIER1" || w.status === "ESCALATED_TIER2",
-  );
+  const hasActive = windows.some((w) => w.status === "OPEN");
 
   const actions = (
     <div className="cc-row" style={{ gap: 10, flexWrap: "wrap" }}>

@@ -1,10 +1,28 @@
 import { NextRequest } from "next/server";
 import { isAdmin } from "@/lib/auth";
-import { env } from "@/lib/env";
 import { createWindowSchema } from "@/lib/validation";
 import { zonedWallTimeToUtc } from "@/lib/time";
 import { createWindow } from "@/lib/windows";
 import { appRedirect } from "@/lib/http";
+
+/** Reconstruct the ordered tier list from indexed `tiers[i][field]` form fields. */
+function parseTiers(form: FormData) {
+  const indices = new Set<number>();
+  for (const key of form.keys()) {
+    const m = key.match(/^tiers\[(\d+)\]\[/);
+    if (m) indices.add(Number(m[1]));
+  }
+  const orNull = (v: FormDataEntryValue | null) => (v === null || v === "" ? undefined : v);
+  return [...indices]
+    .sort((a, b) => a - b)
+    .map((i) => ({
+      label: orNull(form.get(`tiers[${i}][label]`)),
+      claimRule: form.get(`tiers[${i}][claimRule]`),
+      minShiftMinutes: orNull(form.get(`tiers[${i}][minShiftMinutes]`)),
+      leadHours: orNull(form.get(`tiers[${i}][leadHours]`)),
+      respondentIds: form.getAll(`tiers[${i}][respondentIds]`).map(String),
+    }));
+}
 
 export async function POST(request: NextRequest) {
   if (!(await isAdmin())) {
@@ -16,7 +34,7 @@ export async function POST(request: NextRequest) {
     startsAtLocal: form.get("startsAtLocal"),
     endsAtLocal: form.get("endsAtLocal"),
     notes: form.get("notes") ?? "",
-    tier1DeadlineLocal: form.get("tier1DeadlineLocal") || undefined,
+    tiers: parseTiers(form),
   });
 
   if (!parsed.success) {
@@ -24,15 +42,17 @@ export async function POST(request: NextRequest) {
   }
 
   const data = parsed.data;
-  const tier1DeadlineAt = data.tier1DeadlineLocal
-    ? zonedWallTimeToUtc(data.tier1DeadlineLocal)
-    : new Date(Date.now() + env.TIER1_DEFAULT_DEADLINE_HOURS * 3_600_000);
-
   await createWindow({
     startsAt: zonedWallTimeToUtc(data.startsAtLocal),
     endsAt: zonedWallTimeToUtc(data.endsAtLocal),
     notes: data.notes,
-    tier1DeadlineAt,
+    tiers: data.tiers.map((t) => ({
+      label: t.label,
+      claimRule: t.claimRule,
+      minShiftMinutes: t.minShiftMinutes,
+      leadHours: t.leadHours,
+      respondentIds: t.respondentIds,
+    })),
   });
 
   return appRedirect("/");

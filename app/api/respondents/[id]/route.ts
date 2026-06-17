@@ -14,8 +14,6 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   const parsed = respondentSchema.safeParse({
     name: form.get("name"),
     phone: form.get("phone"),
-    tier: form.get("tier"),
-    minShiftMinutes: form.get("minShiftMinutes") ?? 240,
     active: form.get("active") === "on" || form.get("active") === "true",
   });
 

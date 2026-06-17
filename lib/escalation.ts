@@ -3,25 +3,35 @@ import { env } from "@/lib/env";
 import { sendSms } from "@/lib/sms";
 import { escalationPlan, isFullyCovered } from "@/lib/coverage";
 import { formatRange } from "@/lib/time";
-import { coveredIntervals, issueToken, responseLink, windowInterval } from "@/lib/windows";
+import { contactBody, coveredIntervals, issueToken, windowInterval } from "@/lib/windows";
 
 export interface EscalationResult {
   windowId: string;
   outcome: "filled" | "escalated" | "all_flagged";
-  caregiversTexted: number;
+  /** Tier the window landed on after advancing (the new activeTierIndex). */
+  tierIndex: number;
+  respondentsTexted: number;
   flaggedGaps: number;
 }
 
 /**
- * Process tier-1 windows whose deadline has passed. Idempotent: only OPEN_TIER1
- * windows are touched, so repeated cron ticks are safe. For each window with
- * remaining gaps, texts caregivers eligible for each gap and alerts the admin
- * about gaps too short for anyone.
+ * Advance every OPEN window whose active tier's deadline has passed to the next
+ * tier of its ladder, texting that tier's members about the remaining gaps.
+ *
+ * Catch-up, not one-step: if several deadlines already passed (delayed cron, or a
+ * window created after some deadlines), the window lands directly on the correct
+ * tier and only that tier is contacted — intermediate tiers whose window already
+ * closed are skipped. Idempotent: `currentTierDeadlineAt` is reset to the landed
+ * tier's deadline (or null when terminal), so a re-tick won't reprocess a window,
+ * and `issueToken` no-ops on links that already exist.
  */
 export async function runDeadlineEscalation(now: Date = new Date()): Promise<EscalationResult[]> {
   const due = await prisma.window.findMany({
-    where: { status: "OPEN_TIER1", tier1DeadlineAt: { lte: now } },
-    include: { assignments: true },
+    where: { status: "OPEN", currentTierDeadlineAt: { lte: now } },
+    include: {
+      assignments: true,
+      tiers: { include: { members: { include: { respondent: true } } }, orderBy: { position: "asc" } },
+    },
   });
 
   const results: EscalationResult[] = [];
@@ -31,42 +41,58 @@ export async function runDeadlineEscalation(now: Date = new Date()): Promise<Esc
     const covered = coveredIntervals(window.assignments);
 
     if (isFullyCovered(interval, covered)) {
-      await prisma.window.update({ where: { id: window.id }, data: { status: "FILLED" } });
-      results.push({ windowId: window.id, outcome: "filled", caregiversTexted: 0, flaggedGaps: 0 });
+      await prisma.window.update({
+        where: { id: window.id },
+        data: { status: "FILLED", currentTierDeadlineAt: null },
+      });
+      results.push({
+        windowId: window.id,
+        outcome: "filled",
+        tierIndex: window.activeTierIndex,
+        respondentsTexted: 0,
+        flaggedGaps: 0,
+      });
       continue;
     }
 
-    const caregivers = await prisma.respondent.findMany({
-      where: { tier: "TIER2", active: true },
-    });
+    const tiers = window.tiers; // ordered by position asc
+    const lastIndex = tiers.length - 1;
+    // Deadlines are monotonic in position, so the count of passed deadlines is the
+    // index of the tier that should now be active (capped at the terminal tier).
+    const passed = tiers.filter((t) => t.deadlineAt !== null && t.deadlineAt <= now).length;
+    const target = Math.min(passed, lastIndex);
+    const tier = tiers[target];
+
+    // PARTIAL tiers have no minimum shift — every gap is text-able (effective min 0).
+    const effectiveMin = tier.claimRule === "PARTIAL" ? 0 : tier.minShiftMinutes;
     const plan = escalationPlan(
       interval,
       covered,
-      caregivers.map((c) => ({ id: c.id, minShiftMinutes: c.minShiftMinutes })),
+      tier.members.map((m) => ({ id: m.respondentId, minShiftMinutes: effectiveMin })),
     );
 
-    await prisma.window.update({ where: { id: window.id }, data: { status: "ESCALATED_TIER2" } });
-
-    const caregiverIds = new Set<string>();
+    const recipientIds = new Set<string>();
     for (const entry of plan.gapsToText) {
-      for (const c of entry.caregivers) caregiverIds.add(c.id);
+      for (const c of entry.caregivers) recipientIds.add(c.id);
     }
 
-    for (const id of caregiverIds) {
-      const caregiver = caregivers.find((c) => c.id === id);
-      if (!caregiver) continue;
-      const token = await issueToken(window.id, caregiver.id, "TIER2", window.endsAt);
+    for (const id of recipientIds) {
+      const member = tier.members.find((m) => m.respondentId === id);
+      if (!member) continue;
+      const token = await issueToken(window.id, id, tier.id, window.endsAt);
       if (!token) continue;
       await sendSms({
-        to: caregiver.phone,
+        to: member.respondent.phone,
         windowId: window.id,
-        respondentId: caregiver.id,
-        body:
-          `CareCover: paid coverage needed ${formatRange(window.startsAt, window.endsAt)}` +
-          `${window.notes ? ` (${window.notes})` : ""}. ` +
-          `Tap to claim a full open block: ${responseLink(token)}`,
+        respondentId: id,
+        body: contactBody(window, tier, token),
       });
     }
+
+    await prisma.window.update({
+      where: { id: window.id },
+      data: { activeTierIndex: target, currentTierDeadlineAt: tier.deadlineAt },
+    });
 
     if (plan.gapsToFlag.length > 0 && env.ADMIN_PHONE) {
       const list = plan.gapsToFlag.map((g) => formatRange(g.start, g.end)).join(", ");
@@ -74,14 +100,15 @@ export async function runDeadlineEscalation(now: Date = new Date()): Promise<Esc
         to: env.ADMIN_PHONE,
         windowId: window.id,
         respondentId: null,
-        body: `CareCover: ${plan.gapsToFlag.length} gap(s) too short for any caregiver — handle manually: ${list}`,
+        body: `CareCover: ${plan.gapsToFlag.length} gap(s) no one in this tier can take — handle manually: ${list}`,
       });
     }
 
     results.push({
       windowId: window.id,
-      outcome: caregiverIds.size > 0 ? "escalated" : "all_flagged",
-      caregiversTexted: caregiverIds.size,
+      outcome: recipientIds.size > 0 ? "escalated" : "all_flagged",
+      tierIndex: target,
+      respondentsTexted: recipientIds.size,
       flaggedGaps: plan.gapsToFlag.length,
     });
   }

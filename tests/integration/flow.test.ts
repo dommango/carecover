@@ -10,6 +10,8 @@ import { runDeadlineEscalation } from "@/lib/escalation";
 async function reset() {
   await prisma.assignment.deleteMany();
   await prisma.responseToken.deleteMany();
+  await prisma.windowTierMember.deleteMany();
+  await prisma.windowTier.deleteMany();
   await prisma.notificationLog.deleteMany();
   await prisma.window.deleteMany();
   await prisma.respondent.deleteMany();
@@ -34,31 +36,36 @@ afterAll(async () => {
 });
 
 describe("end-to-end coverage flow", () => {
-  it("routes a window through tier-1 split, escalation, and tier-2 fill", async () => {
+  it("routes a window through a PARTIAL tier split, escalation, and whole-gap fill", async () => {
     const [sisterA, sisterB] = await Promise.all([
-      prisma.respondent.create({ data: { name: "Sister A", phone: "+15550000001", tier: "TIER1" } }),
-      prisma.respondent.create({ data: { name: "Sister B", phone: "+15550000002", tier: "TIER1" } }),
+      prisma.respondent.create({ data: { name: "Sister A", phone: "+15550000001" } }),
+      prisma.respondent.create({ data: { name: "Sister B", phone: "+15550000002" } }),
     ]);
     const cgShort = await prisma.respondent.create({
-      data: { name: "CG Short", phone: "+15550000003", tier: "TIER2", minShiftMinutes: 120 },
+      data: { name: "CG Short", phone: "+15550000003" },
     });
-    await prisma.respondent.create({
-      data: { name: "CG Long", phone: "+15550000004", tier: "TIER2", minShiftMinutes: 240 },
+    const cgLong = await prisma.respondent.create({
+      data: { name: "CG Long", phone: "+15550000004" },
     });
 
-    // Window 9am–5pm; tier-1 deadline already passed so escalation will fire.
+    // Window 9am–5pm. Tier deadlines: tier0 (family) at 7am, tier1 (short caregiver)
+    // at 8am, tier2 (long caregiver) terminal. Lead hours strictly decrease.
     const window = await createWindow({
       startsAt: day(9),
       endsAt: day(17),
       notes: "Dad — lunch + meds",
-      tier1DeadlineAt: new Date(Date.now() - 60_000),
+      tiers: [
+        { label: "Family", claimRule: "PARTIAL", minShiftMinutes: 240, leadHours: 2, respondentIds: [sisterA.id, sisterB.id] },
+        { label: "On-call", claimRule: "WHOLE_GAP", minShiftMinutes: 120, leadHours: 1, respondentIds: [cgShort.id] },
+        { label: "Agency", claimRule: "WHOLE_GAP", minShiftMinutes: 240, respondentIds: [cgLong.id] },
+      ],
     });
 
-    // Both sisters were texted.
+    // Both family members (tier 0) were texted.
     const t1 = await tokensFor(window.id);
     expect(t1.size).toBe(2);
 
-    // Sister A covers 9–1.
+    // Sister A covers 9–1 (a PARTIAL sub-range).
     const a = await claimViaToken(t1.get(sisterA.id)!, { start: day(9), end: day(13) });
     expect(a).toMatchObject({ ok: true, filled: false });
 
@@ -71,13 +78,20 @@ describe("end-to-end coverage flow", () => {
     const b = await claimViaToken(t1.get(sisterB.id)!, { start: day(13), end: day(15) });
     expect(b).toMatchObject({ ok: true, filled: false });
 
-    // Deadline escalation: 3–5 is 120 min → only the short-minimum caregiver is eligible.
-    const escalation = await runDeadlineEscalation();
+    // Escalate at 7:30am — past tier 0's deadline (7am) but before tier 1's (8am),
+    // so the window lands on tier 1 (the 120-min-minimum caregiver).
+    const escalation = await runDeadlineEscalation(day(7, 30));
     expect(escalation).toHaveLength(1);
-    expect(escalation[0]).toMatchObject({ outcome: "escalated", caregiversTexted: 1, flaggedGaps: 0 });
+    expect(escalation[0]).toMatchObject({
+      outcome: "escalated",
+      tierIndex: 1,
+      respondentsTexted: 1,
+      flaggedGaps: 0,
+    });
 
     const refreshed = await prisma.window.findUniqueOrThrow({ where: { id: window.id } });
-    expect(refreshed.status).toBe("ESCALATED_TIER2");
+    expect(refreshed.status).toBe("OPEN");
+    expect(refreshed.activeTierIndex).toBe(1);
 
     const t2 = await tokensFor(window.id);
     const cgToken = t2.get(cgShort.id)!;
@@ -85,11 +99,11 @@ describe("end-to-end coverage flow", () => {
 
     // Caregiver sees exactly the eligible gap and must take it whole.
     const view = await getResponseView(cgToken);
-    expect(view?.tier).toBe("TIER2");
+    expect(view?.claimRule).toBe("WHOLE_GAP");
     expect(view?.actionableGaps).toEqual([{ start: day(15), end: day(17) }]);
 
     const partial = await claimViaToken(cgToken, { start: day(15), end: day(16) });
-    expect(partial.ok).toBe(false); // tier-2 cannot take a partial slice
+    expect(partial.ok).toBe(false); // WHOLE_GAP cannot take a partial slice
 
     const whole = await claimViaToken(cgToken, { start: day(15), end: day(17) });
     expect(whole).toMatchObject({ ok: true, filled: true });
@@ -98,19 +112,20 @@ describe("end-to-end coverage flow", () => {
     expect(filled.status).toBe("FILLED");
   });
 
-  it("flags a sub-minimum gap to the admin instead of texting caregivers", async () => {
-    await prisma.respondent.create({
-      data: { name: "Sister A", phone: "+15550000001", tier: "TIER1" },
+  it("flags a sub-minimum gap when no one in the landed tier can take it", async () => {
+    const sister = await prisma.respondent.create({
+      data: { name: "Sister A", phone: "+15550000001" },
     });
-    await prisma.respondent.create({
-      data: { name: "CG", phone: "+15550000003", tier: "TIER2", minShiftMinutes: 120 },
-    });
+    const cg = await prisma.respondent.create({ data: { name: "CG", phone: "+15550000003" } });
 
     const window = await createWindow({
       startsAt: day(9),
       endsAt: day(17),
       notes: "",
-      tier1DeadlineAt: new Date(Date.now() - 60_000),
+      tiers: [
+        { label: "Family", claimRule: "PARTIAL", minShiftMinutes: 240, leadHours: 2, respondentIds: [sister.id] },
+        { label: "Caregiver", claimRule: "WHOLE_GAP", minShiftMinutes: 120, respondentIds: [cg.id] },
+      ],
     });
 
     const t1 = await tokensFor(window.id);
@@ -119,14 +134,87 @@ describe("end-to-end coverage flow", () => {
     await claimViaToken(sisterToken, { start: day(9), end: day(11) });
     await claimViaToken(sisterToken, { start: day(12, 30), end: day(17) });
 
-    const escalation = await runDeadlineEscalation();
+    // Escalate to the WHOLE_GAP tier (min 120). The 90-min gap is too short → flagged.
+    const escalation = await runDeadlineEscalation(day(7, 30));
     expect(escalation[0]).toMatchObject({
       outcome: "all_flagged",
-      caregiversTexted: 0,
+      tierIndex: 1,
+      respondentsTexted: 0,
       flaggedGaps: 1,
     });
 
-    const tier2Tokens = await prisma.responseToken.count({ where: { tier: "TIER2" } });
-    expect(tier2Tokens).toBe(0); // nobody was eligible, so no caregiver token issued
+    const cgTier = await prisma.windowTier.findFirstOrThrow({
+      where: { windowId: window.id, position: 1 },
+    });
+    const issued = await prisma.responseToken.count({ where: { windowTierId: cgTier.id } });
+    expect(issued).toBe(0); // nobody eligible, so no token issued for that tier
+  });
+
+  it("cascades down three tiers, contacting only the landed tier each step", async () => {
+    const sister = await prisma.respondent.create({ data: { name: "Sister", phone: "+15550000001" } });
+    const cgShort = await prisma.respondent.create({ data: { name: "Short", phone: "+15550000003" } });
+    const cgLong = await prisma.respondent.create({ data: { name: "Long", phone: "+15550000004" } });
+
+    // Nothing claimed — the whole 9–17 window (480 min) stays open and cascades.
+    const window = await createWindow({
+      startsAt: day(9),
+      endsAt: day(17),
+      notes: "",
+      tiers: [
+        { label: "Family", claimRule: "PARTIAL", minShiftMinutes: 240, leadHours: 3, respondentIds: [sister.id] },
+        { label: "On-call", claimRule: "WHOLE_GAP", minShiftMinutes: 120, leadHours: 2, respondentIds: [cgShort.id] },
+        { label: "Agency", claimRule: "WHOLE_GAP", minShiftMinutes: 240, respondentIds: [cgLong.id] },
+      ],
+    });
+
+    // Step 1: past tier 0 (deadline 6am), before tier 1 (7am) → land on tier 1.
+    const step1 = await runDeadlineEscalation(day(6, 30));
+    expect(step1[0]).toMatchObject({ tierIndex: 1, respondentsTexted: 1 });
+    expect((await tokensFor(window.id)).get(cgShort.id)).toBeTruthy();
+
+    // Step 2: past tier 1 (deadline 7am) → land on tier 2.
+    const step2 = await runDeadlineEscalation(day(7, 30));
+    expect(step2[0]).toMatchObject({ tierIndex: 2, respondentsTexted: 1 });
+    expect((await tokensFor(window.id)).get(cgLong.id)).toBeTruthy();
+
+    const atTier2 = await prisma.window.findUniqueOrThrow({ where: { id: window.id } });
+    expect(atTier2.activeTierIndex).toBe(2);
+    expect(atTier2.currentTierDeadlineAt).toBeNull(); // terminal tier — no further escalation
+
+    // Earlier PARTIAL tier stays claimable after the ladder advanced.
+    const sisterToken = (await tokensFor(window.id)).get(sister.id)!;
+    const lateClaim = await claimViaToken(sisterToken, { start: day(9), end: day(12) });
+    expect(lateClaim.ok).toBe(true);
+
+    // No more escalation: the terminal window is not reprocessed.
+    const again = await runDeadlineEscalation(day(9));
+    expect(again).toHaveLength(0);
+  });
+
+  it("catches up directly to the correct tier when multiple deadlines have passed", async () => {
+    const sister = await prisma.respondent.create({ data: { name: "Sister", phone: "+15550000001" } });
+    const cgShort = await prisma.respondent.create({ data: { name: "Short", phone: "+15550000003" } });
+    const cgLong = await prisma.respondent.create({ data: { name: "Long", phone: "+15550000004" } });
+
+    await createWindow({
+      startsAt: day(9),
+      endsAt: day(17),
+      notes: "",
+      tiers: [
+        { label: "Family", claimRule: "PARTIAL", minShiftMinutes: 240, leadHours: 3, respondentIds: [sister.id] },
+        { label: "On-call", claimRule: "WHOLE_GAP", minShiftMinutes: 120, leadHours: 2, respondentIds: [cgShort.id] },
+        { label: "Agency", claimRule: "WHOLE_GAP", minShiftMinutes: 240, respondentIds: [cgLong.id] },
+      ],
+    });
+
+    // One run at 8am — both tier 0 (6am) and tier 1 (7am) deadlines already passed.
+    const result = await runDeadlineEscalation(day(8));
+    expect(result[0]).toMatchObject({ tierIndex: 2, respondentsTexted: 1 });
+
+    // Landed straight on tier 2: only the long caregiver was contacted; tier 1 was skipped.
+    const issuedToShort = await prisma.responseToken.count({ where: { respondentId: cgShort.id } });
+    expect(issuedToShort).toBe(0);
+    const issuedToLong = await prisma.responseToken.count({ where: { respondentId: cgLong.id } });
+    expect(issuedToLong).toBe(1);
   });
 });

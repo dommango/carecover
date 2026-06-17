@@ -5,16 +5,14 @@ import { CoverageBar } from "@/components/coverage-bar";
 import { StatusBadge, windowBadge } from "@/components/ui";
 
 const STATUS_BG: Record<string, string> = {
-  OPEN_TIER1: "var(--accent-tint)",
-  ESCALATED_TIER2: "var(--caregiver-tint)",
+  OPEN: "var(--accent-tint)",
   FILLED: "var(--covered-tint)",
   CLOSED: "var(--gap-tint)",
   EXPIRED: "var(--gap-tint)",
 };
 
 const STATUS_BORDER: Record<string, string> = {
-  OPEN_TIER1: "var(--accent)",
-  ESCALATED_TIER2: "var(--caregiver)",
+  OPEN: "var(--accent)",
   FILLED: "var(--covered)",
   CLOSED: "var(--gap)",
   EXPIRED: "var(--gap)",
@@ -63,7 +61,13 @@ export function CalendarView({ windows }: { windows: WindowSummary[] }) {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {g.windows.map((w) => {
-              const badge = windowBadge(w.status, w.coveredPercent, w.flaggedGaps.length > 0);
+              const activeLabel = w.tiers.find((t) => t.position === w.activeTierIndex)?.label;
+              const badge = windowBadge(
+                w.status,
+                w.coveredPercent,
+                w.flaggedGaps.length > 0,
+                activeLabel,
+              );
               return (
                 <Link
                   key={w.id}

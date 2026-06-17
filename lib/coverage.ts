@@ -73,17 +73,20 @@ export type ClaimCheck =
   | { ok: true; range: Interval }
   | { ok: false; reason: string; freeNow: Interval[] };
 
+/** How a tier may claim against a gap. Mirrors the Prisma `ClaimRule` enum values. */
+export type ClaimRule = "PARTIAL" | "WHOLE_GAP";
+
 /**
  * Validate a claim against the window's current free time.
- * - TIER1 (sisters): any sub-range that fits entirely within a single free gap.
- * - TIER2 (caregivers): must take an entire open gap, all-or-nothing.
+ * - PARTIAL: any sub-range that fits entirely within a single free gap.
+ * - WHOLE_GAP: must take an entire open gap, all-or-nothing.
  * On rejection, `freeNow` reflects the currently-available gaps so the UI can refresh.
  */
 export function canClaim(
   window: Interval,
   covered: Interval[],
   requested: Interval,
-  tier: "TIER1" | "TIER2",
+  claimRule: ClaimRule,
 ): ClaimCheck {
   const gaps = computeGaps(window, covered);
   const requestStart = requested.start.getTime();
@@ -95,13 +98,13 @@ export function canClaim(
     return reject("Requested time is outside the window.");
   }
 
-  if (tier === "TIER2") {
+  if (claimRule === "WHOLE_GAP") {
     const matchesGap = gaps.some(
       (g) => g.start.getTime() === requestStart && g.end.getTime() === requestEnd,
     );
     return matchesGap
       ? { ok: true, range: requested }
-      : reject("Caregivers must take an entire open gap.");
+      : reject("This shift must be taken as a whole block.");
   }
 
   const fitsInGap = gaps.some(

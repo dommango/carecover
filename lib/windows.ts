@@ -2,9 +2,16 @@ import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
 import { generateToken, hashToken } from "@/lib/tokens";
 import { sendSms } from "@/lib/sms";
-import { computeGaps, isFullyCovered, canClaim, minutes, type Interval } from "@/lib/coverage";
+import {
+  computeGaps,
+  isFullyCovered,
+  canClaim,
+  minutes,
+  type ClaimRule,
+  type Interval,
+} from "@/lib/coverage";
 import { formatRange } from "@/lib/time";
-import { Prisma, type Tier, type Window } from "@/generated/prisma/client";
+import { Prisma, type Window } from "@/generated/prisma/client";
 
 export const responseLink = (token: string) => `${env.APP_BASE_URL}/r/${token}`;
 
@@ -22,52 +29,103 @@ async function notifyAdmin(body: string, windowId: string): Promise<void> {
   }
 }
 
-/** Mint a per-respondent response token (idempotent on the windowId+respondentId pair). */
-export async function issueToken(windowId: string, respondentId: string, tier: Tier, expiresAt: Date) {
+/**
+ * Mint a per-respondent, per-tier response token (idempotent on the
+ * window+respondent+tier triple). Returns null if a link already exists, so
+ * re-contacting a tier never rotates a live link out from under someone.
+ */
+export async function issueToken(
+  windowId: string,
+  respondentId: string,
+  windowTierId: string,
+  expiresAt: Date,
+) {
   const existing = await prisma.responseToken.findUnique({
-    where: { windowId_respondentId: { windowId, respondentId } },
+    where: { windowId_respondentId_windowTierId: { windowId, respondentId, windowTierId } },
   });
-  if (existing) return null; // already has a link; don't rotate it out from under them
+  if (existing) return null;
   const { token, tokenHash } = generateToken();
   await prisma.responseToken.create({
-    data: { windowId, respondentId, tier, tokenHash, expiresAt },
+    data: { windowId, respondentId, windowTierId, tokenHash, expiresAt },
   });
   return token;
+}
+
+/** SMS body inviting a respondent to claim, phrased per the tier's claim rule. */
+export function contactBody(
+  window: { startsAt: Date; endsAt: Date; notes: string },
+  tier: { claimRule: ClaimRule },
+  token: string,
+): string {
+  const action = tier.claimRule === "PARTIAL" ? "accept all or part" : "accept a shift";
+  return (
+    `CareCover: coverage needed ${formatRange(window.startsAt, window.endsAt)}` +
+    `${window.notes ? ` (${window.notes})` : ""}. ` +
+    `Tap to ${action}: ${responseLink(token)}`
+  );
+}
+
+export interface TierConfigInput {
+  label?: string | null;
+  claimRule: ClaimRule;
+  minShiftMinutes: number;
+  /** Hours before `startsAt` this tier escalates to the next. Omit for the last tier. */
+  leadHours?: number | null;
+  respondentIds: string[];
 }
 
 export interface CreateWindowArgs {
   startsAt: Date;
   endsAt: Date;
   notes: string;
-  tier1DeadlineAt: Date;
+  /** Ordered escalation ladder; index 0 is contacted immediately. At least one tier. */
+  tiers: TierConfigInput[];
 }
 
-/** Create a window and text every active tier-1 sister a response link. */
+/** A tier's escalation instant: `startsAt − leadHours`, or null for a terminal tier. */
+function tierDeadline(startsAt: Date, leadHours: number | null | undefined): Date | null {
+  if (leadHours === null || leadHours === undefined) return null;
+  return new Date(startsAt.getTime() - leadHours * 3_600_000);
+}
+
+/**
+ * Create a window with its per-window tier ladder and text every member of the
+ * first tier a response link.
+ */
 export async function createWindow(args: CreateWindowArgs): Promise<Window> {
   const window = await prisma.window.create({
     data: {
       startsAt: args.startsAt,
       endsAt: args.endsAt,
       notes: args.notes,
-      tier1DeadlineAt: args.tier1DeadlineAt,
+      status: "OPEN",
+      activeTierIndex: 0,
+      currentTierDeadlineAt: tierDeadline(args.startsAt, args.tiers[0]?.leadHours),
+      tiers: {
+        create: args.tiers.map((t, i) => ({
+          position: i,
+          label: t.label ?? null,
+          claimRule: t.claimRule,
+          minShiftMinutes: t.minShiftMinutes,
+          deadlineAt: tierDeadline(args.startsAt, t.leadHours),
+          members: { create: t.respondentIds.map((respondentId) => ({ respondentId })) },
+        })),
+      },
+    },
+    include: {
+      tiers: { include: { members: { include: { respondent: true } } }, orderBy: { position: "asc" } },
     },
   });
 
-  const sisters = await prisma.respondent.findMany({
-    where: { tier: "TIER1", active: true },
-  });
-
-  for (const sister of sisters) {
-    const token = await issueToken(window.id, sister.id, "TIER1", window.endsAt);
+  const tier0 = window.tiers.find((t) => t.position === 0);
+  for (const member of tier0?.members ?? []) {
+    const token = await issueToken(window.id, member.respondentId, tier0!.id, window.endsAt);
     if (!token) continue;
     await sendSms({
-      to: sister.phone,
+      to: member.respondent.phone,
       windowId: window.id,
-      respondentId: sister.id,
-      body:
-        `CareCover: coverage needed ${formatRange(window.startsAt, window.endsAt)}` +
-        `${window.notes ? ` (${window.notes})` : ""}. ` +
-        `Tap to accept all or part: ${responseLink(token)}`,
+      respondentId: member.respondentId,
+      body: contactBody(window, tier0!, token),
     });
   }
 
@@ -81,12 +139,13 @@ export interface ResponseView {
   startsAt: Date;
   endsAt: Date;
   respondentName: string;
-  tier: Tier;
+  claimRule: ClaimRule;
+  tierLabel: string | null;
   expired: boolean;
   fullyCovered: boolean;
   /** Free gaps remaining in the window. */
   gaps: Interval[];
-  /** Gaps this respondent may act on (tier-1: all; tier-2: only those meeting their minimum). */
+  /** Gaps this respondent may act on (PARTIAL: all; WHOLE_GAP: only those meeting the minimum). */
   actionableGaps: Interval[];
   /** Whether this respondent currently has an active assignment for this window. */
   hasAssignment: boolean;
@@ -98,23 +157,22 @@ export async function getResponseView(rawToken: string): Promise<ResponseView | 
     where: { tokenHash: hashToken(rawToken) },
     include: {
       respondent: true,
+      windowTier: true,
       window: { include: { assignments: true } },
     },
   });
   if (!token) return null;
 
-  const { window, respondent } = token;
+  const { window, respondent, windowTier } = token;
   const gaps = computeGaps(windowInterval(window), coveredIntervals(window.assignments));
   const expired = token.revokedAt !== null || token.expiresAt < new Date();
 
   const actionableGaps =
-    token.tier === "TIER2"
-      ? gaps.filter((g) => minutes(g) >= respondent.minShiftMinutes)
+    windowTier.claimRule === "WHOLE_GAP"
+      ? gaps.filter((g) => minutes(g) >= windowTier.minShiftMinutes)
       : gaps;
 
-  const hasAssignment = window.assignments.some(
-    (a) => a.respondentId === respondent.id,
-  );
+  const hasAssignment = window.assignments.some((a) => a.respondentId === respondent.id);
 
   return {
     windowId: window.id,
@@ -123,7 +181,8 @@ export async function getResponseView(rawToken: string): Promise<ResponseView | 
     startsAt: window.startsAt,
     endsAt: window.endsAt,
     respondentName: respondent.name,
-    tier: token.tier,
+    claimRule: windowTier.claimRule,
+    tierLabel: windowTier.label,
     expired,
     fullyCovered: gaps.length === 0,
     gaps,
@@ -136,10 +195,16 @@ export type ClaimResult =
   | { ok: true; filled: boolean; windowId: string }
   | { ok: false; reason: string; freeNow: Interval[] };
 
-const ACTIVE_FOR: Record<Tier, Window["status"][]> = {
-  TIER1: ["OPEN_TIER1", "ESCALATED_TIER2"],
-  TIER2: ["ESCALATED_TIER2"],
-};
+/**
+ * A tier is claimable while the window is open and escalation has reached (or passed)
+ * its position — earlier tiers stay live after the ladder advances.
+ */
+export function tierIsActive(
+  window: { status: Window["status"]; activeTierIndex: number },
+  tier: { position: number },
+): boolean {
+  return window.status === "OPEN" && tier.position <= window.activeTierIndex;
+}
 
 /**
  * Claim time against a window via a response token. Runs at Serializable isolation
@@ -149,6 +214,7 @@ const ACTIVE_FOR: Record<Tier, Window["status"][]> = {
 export async function claimViaToken(rawToken: string, range: Interval): Promise<ClaimResult> {
   const token = await prisma.responseToken.findUnique({
     where: { tokenHash: hashToken(rawToken) },
+    include: { windowTier: true },
   });
   if (!token) return { ok: false, reason: "This link is not valid.", freeNow: [] };
   if (token.revokedAt || token.expiresAt < new Date()) {
@@ -164,7 +230,7 @@ export async function claimViaToken(rawToken: string, range: Interval): Promise<
             include: { assignments: true },
           });
 
-          if (!ACTIVE_FOR[token.tier].includes(window.status)) {
+          if (!tierIsActive(window, token.windowTier)) {
             return {
               ok: false as const,
               reason: "This window is no longer accepting responses.",
@@ -173,7 +239,7 @@ export async function claimViaToken(rawToken: string, range: Interval): Promise<
           }
 
           const covered = coveredIntervals(window.assignments);
-          const check = canClaim(windowInterval(window), covered, range, token.tier);
+          const check = canClaim(windowInterval(window), covered, range, token.windowTier.claimRule);
           if (!check.ok) {
             return { ok: false as const, reason: check.reason, freeNow: check.freeNow };
           }
@@ -182,7 +248,7 @@ export async function claimViaToken(rawToken: string, range: Interval): Promise<
             data: {
               windowId: window.id,
               respondentId: token.respondentId,
-              tier: token.tier,
+              windowTierId: token.windowTierId,
               startsAt: range.start,
               endsAt: range.end,
             },
@@ -252,12 +318,8 @@ export async function unclaimViaToken(rawToken: string): Promise<{ ok: boolean; 
           );
 
           if (wasFilled && !stillFilled) {
-            const newStatus =
-              window.tier1DeadlineAt > new Date() ? "OPEN_TIER1" : "ESCALATED_TIER2";
-            await tx.window.update({
-              where: { id: window.id },
-              data: { status: newStatus },
-            });
+            // Re-open at whatever tier the ladder had reached; activeTierIndex is preserved.
+            await tx.window.update({ where: { id: window.id }, data: { status: "OPEN" } });
           }
 
           await tx.notificationLog.create({

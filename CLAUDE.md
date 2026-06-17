@@ -39,7 +39,7 @@ Three layers, strictly ordered — understand them in this order:
 
 1. **Pure core — `lib/coverage.ts`.** No I/O; plain functions over `Interval`s. This is where every scheduling rule lives and is the most heavily tested: `computeGaps`, `isFullyCovered`, `eligibleCaregivers`, `canClaim` (tier-1 = any sub-range inside a free gap; tier-2 = must match a whole gap exactly), `escalationPlan` (per gap → text eligible caregivers vs flag to admin). **Coverage gaps are always derived here, never stored.**
 
-2. **Service layer** — `lib/windows.ts` (create window + text family, resolve token → response view, `claimViaToken`, decline), `lib/escalation.ts` (the deadline cron logic), `lib/admin.ts` (dashboard summaries, manual assign, close, resend). Claims run inside a `$transaction` at **Serializable isolation** with a retry on `P2034`, giving first-come-wins when two people claim overlapping time.
+2. **Service layer** — `lib/windows.ts` (create window + text family, resolve token → response view, `claimViaToken`, decline), `lib/escalation.ts` (the deadline cron logic), `lib/admin.ts` (dashboard summaries, manual assign, close, resend), `lib/respondents.ts` (respondent CRUD, surfaced at `/respondents`). Claims run inside a `$transaction` at **Serializable isolation** with a retry on `P2034`, giving first-come-wins when two people claim overlapping time. All form input is parsed with the zod schemas in `lib/validation.ts` before reaching this layer.
 
 3. **Next.js App Router** — Server Components read via the service layer; mutations are plain HTML form POSTs to route handlers under `app/api/*` that redirect back (303). Works without client JS, which matters for the no-login `/r/[token]` response page that family/caregivers open from a text.
 
@@ -52,6 +52,8 @@ Three layers, strictly ordered — understand them in this order:
 - **Times are UTC instants in the DB; entry/display is one zone** (`APP_TIMEZONE`, default `America/New_York`). `lib/time.ts` converts: `zonedWallTimeToUtc` (form input → UTC) and `toLocalInputValue` (UTC → datetime-local). Tier-2 claims require an **exact** gap match, so the `toLocalInputValue` → `zonedWallTimeToUtc` round-trip must be lossless — there's a regression test guarding this in `lib/__tests__/time.test.ts`. Time pickers step in 15-minute increments (`step={900}`).
 - **SMS is opt-in.** `lib/sms.ts` only sends if all three `TWILIO_*` vars are set; otherwise it records the message (link and all) to `NotificationLog`. This is why local dev works without Twilio and why `npm run links` can recover response URLs.
 - **Auth is single-admin** (`lib/auth.ts`): a correct `ADMIN_PASSWORD` mints an HMAC-signed cookie; there are no user accounts. Respondents are token-only. Route handlers gate with `isAdmin()`; Server Components with `requireAdmin()` from `lib/guard.ts`.
+- **Config is validated once at startup** (`lib/env.ts`): all env vars go through a zod schema at import, so misconfiguration throws loudly rather than failing at first request. Import `env`/`smsEnabled` from here — don't read `process.env` directly.
+- **Redirect via `appRedirect()` from `lib/http.ts`, not `request.url`.** Behind Railway's proxy, `request.url` is the internal container address; redirects must be built from the trusted public `APP_BASE_URL`. Route handlers use `appRedirect(path)` (303) to send the browser back.
 
 ### Stack specifics (see `AGENTS.md`)
 

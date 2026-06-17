@@ -108,51 +108,51 @@ describe("eligibleCaregivers", () => {
   });
 });
 
-describe("canClaim — tier 1 (free sub-range)", () => {
+describe("canClaim — PARTIAL (free sub-range)", () => {
   const win = iv(9, 17);
 
   it("accepts a sub-range inside free time", () => {
-    const r = canClaim(win, [], iv(9, 12), "TIER1");
+    const r = canClaim(win, [], iv(9, 12), "PARTIAL");
     expect(r.ok).toBe(true);
   });
 
   it("accepts a sub-range that fits between existing coverage", () => {
-    const r = canClaim(win, [iv(9, 11), iv(14, 17)], iv(11, 14), "TIER1");
+    const r = canClaim(win, [iv(9, 11), iv(14, 17)], iv(11, 14), "PARTIAL");
     expect(r.ok).toBe(true);
   });
 
   it("rejects a range overlapping existing coverage and reports free time", () => {
-    const r = canClaim(win, [iv(9, 12)], iv(11, 14), "TIER1");
+    const r = canClaim(win, [iv(9, 12)], iv(11, 14), "PARTIAL");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.freeNow).toEqual([iv(12, 17)]);
   });
 
   it("rejects a range outside the window bounds", () => {
-    expect(canClaim(win, [], iv(8, 10), "TIER1").ok).toBe(false);
-    expect(canClaim(win, [], iv(16, 18), "TIER1").ok).toBe(false);
+    expect(canClaim(win, [], iv(8, 10), "PARTIAL").ok).toBe(false);
+    expect(canClaim(win, [], iv(16, 18), "PARTIAL").ok).toBe(false);
   });
 
   it("rejects an empty or inverted range", () => {
-    expect(canClaim(win, [], { start: at(10), end: at(10) }, "TIER1").ok).toBe(false);
-    expect(canClaim(win, [], { start: at(12), end: at(10) }, "TIER1").ok).toBe(false);
+    expect(canClaim(win, [], { start: at(10), end: at(10) }, "PARTIAL").ok).toBe(false);
+    expect(canClaim(win, [], { start: at(12), end: at(10) }, "PARTIAL").ok).toBe(false);
   });
 });
 
-describe("canClaim — tier 2 (whole gap, all-or-nothing)", () => {
+describe("canClaim — WHOLE_GAP (all-or-nothing)", () => {
   const win = iv(9, 17);
 
   it("accepts a request that exactly matches a current gap", () => {
-    const r = canClaim(win, [iv(9, 11), iv(14, 17)], iv(11, 14), "TIER2");
+    const r = canClaim(win, [iv(9, 11), iv(14, 17)], iv(11, 14), "WHOLE_GAP");
     expect(r.ok).toBe(true);
   });
 
   it("rejects a partial slice of a gap", () => {
-    const r = canClaim(win, [iv(9, 11), iv(14, 17)], iv(11, 13), "TIER2");
+    const r = canClaim(win, [iv(9, 11), iv(14, 17)], iv(11, 13), "WHOLE_GAP");
     expect(r.ok).toBe(false);
   });
 
   it("rejects a range spanning across covered time", () => {
-    const r = canClaim(win, [iv(11, 12)], iv(9, 17), "TIER2");
+    const r = canClaim(win, [iv(11, 12)], iv(9, 17), "WHOLE_GAP");
     expect(r.ok).toBe(false);
   });
 });
@@ -184,5 +184,18 @@ describe("escalationPlan", () => {
     const plan = escalationPlan(win, covered, caregivers);
     expect(plan.gapsToFlag).toEqual([iv(9, 10)]);
     expect(plan.gapsToText.map((g) => g.gap)).toEqual([{ start: at(10, 30), end: at(17) }]);
+  });
+
+  it("texts every gap and flags none for a PARTIAL tier (members stamped with min 0)", () => {
+    // A PARTIAL escalation tier has no minimum shift: the caller stamps minShiftMinutes 0,
+    // so even a tiny 60-min gap is textable rather than flagged.
+    const partialMembers = [cg("p1", 0), cg("p2", 0)];
+    const covered = [{ start: at(10), end: at(10, 30) }]; // gaps 9–10 (60m) and 10:30–17
+    const plan = escalationPlan(win, covered, partialMembers);
+    expect(plan.gapsToFlag).toEqual([]);
+    expect(plan.gapsToText.map((g) => g.gap)).toEqual([
+      iv(9, 10),
+      { start: at(10, 30), end: at(17) },
+    ]);
   });
 });
