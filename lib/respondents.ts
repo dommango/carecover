@@ -1,15 +1,17 @@
 import { prisma } from "@/lib/db";
 import { normalizePhone } from "@/lib/time";
 import { sendSms } from "@/lib/sms";
+import { env } from "@/lib/env";
 import type { RespondentInput } from "@/lib/validation";
 
 // One-time opt-in/consent text sent the first time a respondent is added. It
-// carries the brand, purpose, frequency disclosure, and STOP/HELP so consent is
-// recorded before any coverage text goes out — this is the verifiable opt-in the
-// A2P 10DLC campaign references.
+// carries the brand, purpose, frequency disclosure, STOP/HELP, and a link to the
+// program terms so consent is recorded before any coverage text goes out — this
+// is the verifiable opt-in the A2P 10DLC campaign references.
 export const optInBody = () =>
   "CareCover: You've been added to receive caregiving shift coordination texts. " +
-  "Msg frequency varies; msg & data rates may apply. Reply STOP to opt out, HELP for help.";
+  "Msg frequency varies; msg & data rates may apply. Reply STOP to opt out, HELP for help. " +
+  `Terms: ${env.APP_BASE_URL}/terms`;
 
 export function listRespondents() {
   return prisma.respondent.findMany({ orderBy: { name: "asc" } });
