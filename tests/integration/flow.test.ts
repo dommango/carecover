@@ -27,7 +27,12 @@ async function tokensFor(windowId: string): Promise<Map<string, string>> {
   return map;
 }
 
-const day = (h: number, m = 0) => new Date(Date.UTC(2026, 6, 15, h, m)); // future date
+// Anchored a week ahead of the run, not a fixed calendar date: response tokens
+// expire at the window's end, so a hardcoded day silently expires the whole
+// fixture once it passes and every claim fails with "This link has expired."
+const ANCHOR = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+const day = (h: number, m = 0) =>
+  new Date(Date.UTC(ANCHOR.getUTCFullYear(), ANCHOR.getUTCMonth(), ANCHOR.getUTCDate(), h, m));
 
 beforeEach(reset);
 afterAll(async () => {
