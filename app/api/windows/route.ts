@@ -42,18 +42,23 @@ export async function POST(request: NextRequest) {
   }
 
   const data = parsed.data;
-  await createWindow({
-    startsAt: zonedWallTimeToUtc(data.startsAtLocal),
-    endsAt: zonedWallTimeToUtc(data.endsAtLocal),
-    notes: data.notes,
-    tiers: data.tiers.map((t) => ({
-      label: t.label,
-      claimRule: t.claimRule,
-      minShiftMinutes: t.minShiftMinutes,
-      leadHours: t.leadHours,
-      respondentIds: t.respondentIds,
-    })),
-  });
+  try {
+    await createWindow({
+      startsAt: zonedWallTimeToUtc(data.startsAtLocal),
+      endsAt: zonedWallTimeToUtc(data.endsAtLocal),
+      notes: data.notes,
+      tiers: data.tiers.map((t) => ({
+        label: t.label,
+        claimRule: t.claimRule,
+        minShiftMinutes: t.minShiftMinutes,
+        leadHours: t.leadHours,
+        respondentIds: t.respondentIds,
+      })),
+    });
+  } catch (error) {
+    console.error("createWindow failed:", error);
+    return appRedirect("/?error=window");
+  }
 
   return appRedirect("/");
 }

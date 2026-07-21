@@ -92,6 +92,11 @@ export default async function RespondentsPage({
         {error === "phone" && (
           <Note tone="bad" icon={<Icon.flag />}>That phone number didn&apos;t look valid.</Note>
         )}
+        {error && error !== "phone" && (
+          <Note tone="bad" icon={<Icon.flag />}>
+            Couldn&apos;t save that person — check the name and phone number, then try again.
+          </Note>
+        )}
 
         {/* add a person */}
         <div className="cc-card" style={{ padding: 22 }}>
