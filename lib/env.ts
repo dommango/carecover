@@ -10,6 +10,8 @@ const schema = z.object({
   SESSION_SECRET: z.string().min(16, "SESSION_SECRET must be at least 16 chars"),
   TIER1_DEFAULT_DEADLINE_HOURS: z.coerce.number().int().positive().default(12),
   CRON_SECRET: z.string().min(1),
+  // SMS bodies in NotificationLog are blanked after this many days (lib/retention.ts).
+  LOG_BODY_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
   ADMIN_PHONE: z.string().default(""), // optional: where fill/escalation alerts go
   TWILIO_ACCOUNT_SID: z.string().default(""),
   TWILIO_AUTH_TOKEN: z.string().default(""),

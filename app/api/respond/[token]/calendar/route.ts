@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { env } from "@/lib/env";
 import { hashToken } from "@/lib/tokens";
 
 function toICalUTC(date: Date): string {
@@ -20,7 +21,6 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ token: 
 
   const responseToken = await prisma.responseToken.findUnique({
     where: { tokenHash: hashToken(token) },
-    include: { respondent: true, window: true },
   });
 
   if (!responseToken || responseToken.revokedAt || responseToken.expiresAt < new Date()) {
@@ -40,8 +40,9 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ token: 
   }
 
   const now = new Date();
-  const { respondent, window } = responseToken;
 
+  // The event lands in a third-party calendar (Google/Apple), so it carries no
+  // names or notes — just the times and a link back to the token page for details.
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -51,8 +52,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ token: 
     `DTSTAMP:${toICalUTC(now)}`,
     `DTSTART:${toICalUTC(assignment.startsAt)}`,
     `DTEND:${toICalUTC(assignment.endsAt)}`,
-    `SUMMARY:${icalEscape(`CareCover shift — ${respondent.name}`)}`,
-    `DESCRIPTION:${icalEscape(window.notes || "Caregiving coverage")}`,
+    "SUMMARY:CareCover shift",
+    `DESCRIPTION:${icalEscape(`Caregiving coverage — details: ${env.APP_BASE_URL}/r/${token}`)}`,
     "END:VEVENT",
     "END:VCALENDAR",
   ];

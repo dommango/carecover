@@ -7,6 +7,7 @@ import { Btn, BtnLink } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { CoverageBar } from "@/components/coverage-bar";
 import { TierEditor, type InitialTier } from "@/components/tier-editor";
+import { TaskTagPicker } from "@/components/task-tags";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,7 @@ export default async function NewWindowPage({
   let defaultStart: string;
   let defaultEnd: string;
   let defaultNotes = "";
+  let defaultTags: string[] = [];
   let initialTiers: InitialTier[] | undefined;
 
   if (duplicateWindow) {
@@ -51,6 +53,7 @@ export default async function NewWindowPage({
     defaultStart = toLocalInputValue(previewStart);
     defaultEnd = toLocalInputValue(previewEnd);
     defaultNotes = duplicateWindow.notes;
+    defaultTags = duplicateWindow.taskTags;
     initialTiers = duplicateWindow.tiers.map((t) => ({
       label: t.label ?? "",
       claimRule: t.claimRule,
@@ -121,13 +124,18 @@ export default async function NewWindowPage({
                 · optional
               </span>
             </div>
+            <TaskTagPicker defaultSelected={defaultTags} />
             <input
               type="text"
               name="notes"
-              placeholder="e.g. lunch + meds, no driving"
+              placeholder="e.g. key under the mat, park in the driveway"
               defaultValue={defaultNotes}
               className="cc-input"
+              style={{ marginTop: 10 }}
             />
+            <div style={{ marginTop: 6, fontSize: 12.5, fontWeight: 600, color: "var(--ink-faint)" }}>
+              Don&apos;t include medical details — share those in person.
+            </div>
           </div>
 
           {/* fallback for the rare no-JS case: a single default tier the editor replaces */}

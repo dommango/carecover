@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/guard";
 import { getAdminWindows, type WindowSummary } from "@/lib/admin";
 import { formatDate, formatTime } from "@/lib/time";
 import { CoverageBar } from "@/components/coverage-bar";
+import { TaskTagChips } from "@/components/task-tags";
 import { CalendarView } from "@/components/calendar-view";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { AdminShell } from "@/components/admin-shell";
@@ -98,6 +99,7 @@ function WindowRow({ w }: { w: WindowSummary }) {
         <div style={{ marginTop: 9, fontSize: 12.5, fontWeight: 700, color: "var(--ink-soft)" }}>
           {coverageCaption(w)}
         </div>
+        <TaskTagChips tags={w.taskTags} style={{ marginTop: 6 }} />
         {w.notes && (
           <div
             style={{

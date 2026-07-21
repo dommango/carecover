@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
     startsAtLocal: form.get("startsAtLocal"),
     endsAtLocal: form.get("endsAtLocal"),
     notes: form.get("notes") ?? "",
+    taskTags: form.getAll("taskTags").map(String),
     tiers: parseTiers(form),
   });
 
@@ -47,6 +48,7 @@ export async function POST(request: NextRequest) {
       startsAt: zonedWallTimeToUtc(data.startsAtLocal),
       endsAt: zonedWallTimeToUtc(data.endsAtLocal),
       notes: data.notes,
+      taskTags: data.taskTags,
       tiers: data.tiers.map((t) => ({
         label: t.label,
         claimRule: t.claimRule,

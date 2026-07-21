@@ -49,6 +49,15 @@ Three layers, strictly ordered — understand them in this order:
 
 ### Cross-cutting invariants — easy to break
 
+- **The care recipient is never identified.** No name, initials, DOB, address, condition, or
+  medication fields exist anywhere, and no free-text input may prompt toward health details
+  (window "what's needed" copy steers to logistics; task types come from the fixed non-clinical
+  presets in `lib/task-tags.ts`). **Outbound SMS bodies carry only the time range and response
+  link** — never `notes`, task tags, or full names (`firstNameOf` from `lib/names.ts` for
+  people) — because every body transits Twilio and is persisted to `NotificationLog`. Stored
+  bodies are blanked after `LOG_BODY_RETENTION_DAYS` (default 90) by `lib/retention.ts` on the
+  cron tick, and the `.ics` export contains no names or notes.
+
 - **Times are UTC instants in the DB; entry/display is one zone** (`APP_TIMEZONE`, default `America/New_York`). `lib/time.ts` converts: `zonedWallTimeToUtc` (form input → UTC) and `toLocalInputValue` (UTC → datetime-local). Tier-2 claims require an **exact** gap match, so the `toLocalInputValue` → `zonedWallTimeToUtc` round-trip must be lossless — there's a regression test guarding this in `lib/__tests__/time.test.ts`. Time pickers step in 15-minute increments (`step={900}`).
 - **SMS is opt-in.** `lib/sms.ts` only sends if all three `TWILIO_*` vars are set; otherwise it records the message (link and all) to `NotificationLog`. This is why local dev works without Twilio and why `npm run links` can recover response URLs.
 - **Auth is single-admin** (`lib/auth.ts`): a correct `ADMIN_PASSWORD` mints an HMAC-signed cookie; there are no user accounts. Respondents are token-only. Route handlers gate with `isAdmin()`; Server Components with `requireAdmin()` from `lib/guard.ts`.
