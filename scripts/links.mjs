@@ -8,7 +8,7 @@ const DB =
 const client = new pg.Client({ connectionString: DB });
 await client.connect();
 const { rows } = await client.query(
-  `SELECT n.body, r.name, r.tier
+  `SELECT n.body, r.name, r.phone
      FROM "NotificationLog" n
      LEFT JOIN "Respondent" r ON r.id = n."respondentId"
     WHERE n.channel = 'sms' AND n.body LIKE '%/r/%'
@@ -23,7 +23,7 @@ if (rows.length === 0) {
   console.log("Most recent response links (newest first):\n");
   for (const r of rows) {
     const url = r.body.match(/(https?:\/\/\S+)/)?.[1] ?? "?";
-    const who = r.name ? `${r.name} (${r.tier === "TIER1" ? "sister" : "caregiver"})` : "unknown";
+    const who = r.name ? `${r.name} (${r.phone})` : "unknown";
     console.log(`  ${who}\n  ${url}\n`);
   }
 }
