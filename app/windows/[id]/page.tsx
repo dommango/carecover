@@ -6,6 +6,7 @@ import { formatDate, formatRange, formatTime, toLocalInputValue } from "@/lib/ti
 import { CoverageBar } from "@/components/coverage-bar";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { AdminShell } from "@/components/admin-shell";
+import { ConfirmBtn } from "@/components/confirm-submit";
 import { Icon } from "@/components/icons";
 import {
   Btn,
@@ -431,18 +432,13 @@ export default async function WindowDetailPage({
                           style={{ display: "inline" }}
                         >
                           <input type="hidden" name="assignmentId" value={a.id} />
-                          <button
-                            type="submit"
-                            className="cc-btn cc-btn--ghost"
+                          <ConfirmBtn
+                            message="Remove this assignment?"
+                            variant="ghost"
                             style={{ padding: "4px 8px", fontSize: 12 }}
-                            onClick={(e) => {
-                              if (!confirm("Remove this assignment?")) {
-                                e.preventDefault();
-                              }
-                            }}
                           >
                             Remove
-                          </button>
+                          </ConfirmBtn>
                         </form>
                       </div>
                     </div>
