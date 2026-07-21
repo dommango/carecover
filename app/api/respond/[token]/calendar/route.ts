@@ -43,6 +43,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ token: 
 
   // The event lands in a third-party calendar (Google/Apple), so it carries no
   // names or notes — just the times and a link back to the token page for details.
+  // Tradeoff: the link is the respondent's own bearer token (already delivered to
+  // them by SMS), now also stored in their calendar until the window ends.
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",

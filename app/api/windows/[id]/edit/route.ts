@@ -15,7 +15,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   const startsAtLocal = String(form.get("startsAtLocal") ?? "");
   const endsAtLocal = String(form.get("endsAtLocal") ?? "");
   const notes = String(form.get("notes") ?? "");
-  const taskTags = form.getAll("taskTags").map(String).filter(isTaskTag);
+  const taskTags = [...new Set(form.getAll("taskTags").map(String).filter(isTaskTag))];
 
   if (!startsAtLocal || !endsAtLocal) {
     return appRedirect(`/windows/${id}?error=edit`);
