@@ -6,7 +6,7 @@ import { CoverageBar } from "@/components/coverage-bar";
 import { CalendarView } from "@/components/calendar-view";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { AdminShell } from "@/components/admin-shell";
-import { BtnLink, StatusBadge, windowBadge } from "@/components/ui";
+import { BtnLink, Note, StatusBadge, windowBadge } from "@/components/ui";
 import { Icon } from "@/components/icons";
 
 export const dynamic = "force-dynamic";
@@ -155,12 +155,20 @@ function WindowRow({ w }: { w: WindowSummary }) {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; error?: string }>;
 }) {
   await requireAdmin();
-  const { view } = await searchParams;
+  const { view, error } = await searchParams;
   const showCalendar = view === "calendar";
   const windows = await getAdminWindows();
+
+  const errorNote = error === "window" && (
+    <div style={{ marginBottom: 18 }}>
+      <Note tone="bad" icon={<Icon.x width={17} height={17} />}>
+        Couldn&apos;t post that window — check the times and tiers, then try again.
+      </Note>
+    </div>
+  );
 
   const sub =
     windows.length > 0
@@ -196,6 +204,7 @@ export default async function DashboardPage({
   if (windows.length === 0) {
     return (
       <AdminShell active="dash" title="Coverage" actions={actions}>
+        {errorNote}
         <div
           style={{
             minHeight: "60vh",
@@ -259,6 +268,7 @@ export default async function DashboardPage({
 
   return (
     <AdminShell active="dash" title="Coverage" sub={sub} actions={actions}>
+      {errorNote}
       {/* summary strip */}
       <div className="cc-dash-stats" style={{ marginBottom: 18 }}>
         {stats.map((s, i) => (

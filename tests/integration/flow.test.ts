@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "@/lib/db";
 import { createWindow, claimViaToken, getResponseView } from "@/lib/windows";
-import { runDeadlineEscalation } from "@/lib/escalation";
+import { expirePastWindows, runDeadlineEscalation } from "@/lib/escalation";
 
 // These run against the local dev Postgres (see docker container on :5435).
 // Twilio is unconfigured, so every SMS is recorded to NotificationLog with the
@@ -221,5 +221,35 @@ describe("end-to-end coverage flow", () => {
     expect(issuedToShort).toBe(0);
     const issuedToLong = await prisma.responseToken.count({ where: { respondentId: cgLong.id } });
     expect(issuedToLong).toBe(1);
+  });
+
+  it("expires an OPEN window once its end passes, and escalation then skips it", async () => {
+    const sister = await prisma.respondent.create({ data: { name: "Sister", phone: "+15550000001" } });
+    const cg = await prisma.respondent.create({ data: { name: "CG", phone: "+15550000004" } });
+
+    const window = await createWindow({
+      startsAt: day(9),
+      endsAt: day(17),
+      notes: "",
+      tiers: [
+        { label: "Family", claimRule: "PARTIAL", minShiftMinutes: 240, leadHours: 2, respondentIds: [sister.id] },
+        { label: "Agency", claimRule: "WHOLE_GAP", minShiftMinutes: 240, respondentIds: [cg.id] },
+      ],
+    });
+
+    // Still running: nothing expires.
+    expect(await expirePastWindows(day(16, 59))).toBe(0);
+
+    // Past the end: the window flips to EXPIRED and drops its pending deadline.
+    expect(await expirePastWindows(day(17))).toBe(1);
+    const after = await prisma.window.findUniqueOrThrow({ where: { id: window.id } });
+    expect(after.status).toBe("EXPIRED");
+    expect(after.currentTierDeadlineAt).toBeNull();
+
+    // Idempotent, and escalation no longer texts anyone about the finished window.
+    expect(await expirePastWindows(day(18))).toBe(0);
+    expect(await runDeadlineEscalation(day(18))).toHaveLength(0);
+    const issuedToCg = await prisma.responseToken.count({ where: { respondentId: cg.id } });
+    expect(issuedToCg).toBe(0);
   });
 });

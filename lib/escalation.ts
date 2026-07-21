@@ -15,6 +15,20 @@ export interface EscalationResult {
 }
 
 /**
+ * Mark OPEN windows whose end time has passed as EXPIRED. Runs before deadline
+ * escalation on each cron tick so a window that ended with gaps still open
+ * stops reading as OPEN — and is never escalated, so no one gets texted about
+ * a shift that's already over.
+ */
+export async function expirePastWindows(now: Date = new Date()): Promise<number> {
+  const { count } = await prisma.window.updateMany({
+    where: { status: "OPEN", endsAt: { lte: now } },
+    data: { status: "EXPIRED", currentTierDeadlineAt: null },
+  });
+  return count;
+}
+
+/**
  * Advance every OPEN window whose active tier's deadline has passed to the next
  * tier of its ladder, texting that tier's members about the remaining gaps.
  *
