@@ -7,6 +7,7 @@ import { CoverageBar } from "@/components/coverage-bar";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { AdminShell } from "@/components/admin-shell";
 import { ConfirmBtn } from "@/components/confirm-submit";
+import { TaskTagChips, TaskTagPicker } from "@/components/task-tags";
 import { Icon } from "@/components/icons";
 import {
   Btn,
@@ -111,17 +112,21 @@ export default async function WindowDetailPage({
         </div>
       )}
 
-      {w.notes && (
-        <div
-          style={{
-            fontSize: 15,
-            fontWeight: 600,
-            color: "var(--ink-soft)",
-            lineHeight: 1.45,
-            marginBottom: 18,
-          }}
-        >
-          {w.notes}
+      {(w.taskTags.length > 0 || w.notes) && (
+        <div style={{ marginBottom: 18, display: "flex", flexDirection: "column", gap: 8 }}>
+          <TaskTagChips tags={w.taskTags} />
+          {w.notes && (
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 600,
+                color: "var(--ink-soft)",
+                lineHeight: 1.45,
+              }}
+            >
+              {w.notes}
+            </div>
+          )}
         </div>
       )}
 
@@ -290,14 +295,19 @@ export default async function WindowDetailPage({
                 </div>
                 <div>
                   <div className="cc-field-label" style={{ marginBottom: 6 }}>
-                    NOTES
+                    WHAT&apos;S NEEDED
                   </div>
+                  <TaskTagPicker defaultSelected={w.taskTags} />
                   <input
                     type="text"
                     name="notes"
                     defaultValue={w.notes}
                     className="cc-input"
+                    style={{ marginTop: 10 }}
                   />
+                  <div style={{ marginTop: 6, fontSize: 12.5, fontWeight: 600, color: "var(--ink-faint)" }}>
+                    Don&apos;t include medical details — share those in person.
+                  </div>
                 </div>
                 <div>
                   <Btn variant="primary" size="sm" icon={<Icon.check width={16} height={16} />}>
@@ -562,7 +572,11 @@ export default async function WindowDetailPage({
                         }}
                         title={n.body}
                       >
-                        {n.body.length > 80 ? `${n.body.slice(0, 80)}…` : n.body}
+                        {n.body === ""
+                          ? "Message text removed after retention window"
+                          : n.body.length > 80
+                            ? `${n.body.slice(0, 80)}…`
+                            : n.body}
                       </div>
                     </div>
                   </div>

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { editWindow } from "@/lib/admin";
 import { zonedWallTimeToUtc } from "@/lib/time";
+import { isTaskTag } from "@/lib/task-tags";
 import { appRedirect } from "@/lib/http";
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -14,6 +15,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   const startsAtLocal = String(form.get("startsAtLocal") ?? "");
   const endsAtLocal = String(form.get("endsAtLocal") ?? "");
   const notes = String(form.get("notes") ?? "");
+  const taskTags = [...new Set(form.getAll("taskTags").map(String).filter(isTaskTag))];
 
   if (!startsAtLocal || !endsAtLocal) {
     return appRedirect(`/windows/${id}?error=edit`);
@@ -23,6 +25,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     startsAt: zonedWallTimeToUtc(startsAtLocal),
     endsAt: zonedWallTimeToUtc(endsAtLocal),
     notes,
+    taskTags,
   });
 
   return appRedirect(`/windows/${id}?${result.ok ? "ok=edited" : "error=edit"}`);

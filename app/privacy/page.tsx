@@ -27,7 +27,7 @@ export default function PrivacyPage() {
         >
           Privacy Policy
         </h1>
-        <p style={{ ...pStyle, marginBottom: 22 }}>CareCover · Last updated June 12, 2026</p>
+        <p style={{ ...pStyle, marginBottom: 22 }}>CareCover · Last updated July 20, 2026</p>
 
         <div
           style={{
@@ -55,7 +55,19 @@ export default function PrivacyPage() {
               We store the name and mobile phone number of each family member or caregiver the
               account owner adds, the caregiving time windows they are invited to cover, their
               responses (accepted, declined, or canceled coverage), and a log of text messages
-              sent to them, kept for delivery troubleshooting.
+              sent to them, kept for delivery troubleshooting. The text of logged messages is
+              deleted after 90 days.
+            </p>
+          </section>
+
+          <section style={sectionStyle}>
+            <h2 style={hStyle}>What we never collect</h2>
+            <p style={pStyle}>
+              CareCover never stores the name or identity of the person receiving care, and it
+              never stores medical or health information. Coverage windows are described only by
+              date, time, general task type (such as meals or transport), and brief logistics
+              notes. Text messages contain only the time needed and a private response link —
+              never task details or names.
             </p>
           </section>
 

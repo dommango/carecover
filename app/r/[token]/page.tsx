@@ -5,7 +5,9 @@ import { CoverageBar, type CovSegment } from "@/components/coverage-bar";
 import { CovLegend } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { PresetButtons } from "@/components/preset-buttons";
+import { TaskTagChips } from "@/components/task-tags";
 import { UnclaimForm } from "@/components/unclaim-form";
+import { firstNameOf } from "@/lib/names";
 import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
@@ -92,10 +94,6 @@ function SealState({
       {footer && <div style={{ marginTop: 24 }}>{footer}</div>}
     </main>
   );
-}
-
-function firstNameOf(name: string): string {
-  return name.split(/\s+/)[0] || name;
 }
 
 /** Subtract gaps from [startsAt,endsAt] to derive the covered ("Taken") pieces. */
@@ -332,6 +330,7 @@ export default async function RespondPage({
           </div>
         </div>
 
+        <TaskTagChips tags={view.taskTags} style={{ marginBottom: view.notes ? 10 : 14 }} />
         {view.notes && (
           <div
             style={{

@@ -51,6 +51,7 @@ npm run test:e2e            # Playwright admin happy path (npx playwright instal
 | `SESSION_SECRET` | Signs the admin session cookie (≥16 chars) |
 | `TIER1_DEFAULT_DEADLINE_HOURS` | Default sisters' deadline when unset (default 12) |
 | `CRON_SECRET` | Shared secret for the deadline cron endpoint |
+| `LOG_BODY_RETENTION_DAYS` | Days before logged SMS bodies are blanked (default 90) |
 | `ADMIN_PHONE` | Optional: receives "filled"/escalation alerts |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | Twilio SMS (blank = log instead of send) |
 

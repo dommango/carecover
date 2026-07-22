@@ -11,6 +11,7 @@ import {
   type Interval,
 } from "@/lib/coverage";
 import { formatRange } from "@/lib/time";
+import { firstNameOf } from "@/lib/names";
 import { Prisma, type Window } from "@/generated/prisma/client";
 
 export const responseLink = (token: string) => `${env.APP_BASE_URL}/r/${token}`;
@@ -51,17 +52,21 @@ export async function issueToken(
   return token;
 }
 
-/** SMS body inviting a respondent to claim, phrased per the tier's claim rule. */
+/**
+ * SMS body inviting a respondent to claim, phrased per the tier's claim rule.
+ * Deliberately just the time range and link — notes and task details live only
+ * behind the token page, never in the message (SMS transits Twilio and carriers,
+ * and every body is persisted to NotificationLog).
+ */
 export function contactBody(
-  window: { startsAt: Date; endsAt: Date; notes: string },
+  window: { startsAt: Date; endsAt: Date },
   tier: { claimRule: ClaimRule },
   token: string,
 ): string {
   const action = tier.claimRule === "PARTIAL" ? "accept all or part" : "accept a shift";
   return (
-    `CareCover: coverage needed ${formatRange(window.startsAt, window.endsAt)}` +
-    `${window.notes ? ` (${window.notes})` : ""}. ` +
-    `Tap to ${action}: ${responseLink(token)}`
+    `CareCover: coverage needed ${formatRange(window.startsAt, window.endsAt)}. ` +
+    `Details & tap to ${action}: ${responseLink(token)}`
   );
 }
 
@@ -78,6 +83,8 @@ export interface CreateWindowArgs {
   startsAt: Date;
   endsAt: Date;
   notes: string;
+  /** Preset non-clinical task types from lib/task-tags.ts. */
+  taskTags?: string[];
   /** Ordered escalation ladder; index 0 is contacted immediately. At least one tier. */
   tiers: TierConfigInput[];
 }
@@ -98,6 +105,7 @@ export async function createWindow(args: CreateWindowArgs): Promise<Window> {
       startsAt: args.startsAt,
       endsAt: args.endsAt,
       notes: args.notes,
+      taskTags: args.taskTags ?? [],
       status: "OPEN",
       activeTierIndex: 0,
       currentTierDeadlineAt: tierDeadline(args.startsAt, args.tiers[0]?.leadHours),
@@ -136,6 +144,7 @@ export interface ResponseView {
   windowId: string;
   status: Window["status"];
   notes: string;
+  taskTags: string[];
   startsAt: Date;
   endsAt: Date;
   respondentName: string;
@@ -178,6 +187,7 @@ export async function getResponseView(rawToken: string): Promise<ResponseView | 
     windowId: window.id,
     status: window.status,
     notes: window.notes,
+    taskTags: window.taskTags,
     startsAt: window.startsAt,
     endsAt: window.endsAt,
     respondentName: respondent.name,
@@ -327,7 +337,7 @@ export async function unclaimViaToken(rawToken: string): Promise<{ ok: boolean; 
               windowId: token.windowId,
               respondentId: token.respondentId,
               channel: "event",
-              body: `${token.respondent.name} canceled their coverage`,
+              body: `${firstNameOf(token.respondent.name)} canceled their coverage`,
               status: "SENT",
             },
           });
@@ -336,7 +346,7 @@ export async function unclaimViaToken(rawToken: string): Promise<{ ok: boolean; 
             const a = assignments[0];
             await sendSms({
               to: env.ADMIN_PHONE,
-              body: `CareCover: ${token.respondent.name} can no longer cover ${formatRange(a.startsAt, a.endsAt)}. The gap is now open.`,
+              body: `CareCover: ${firstNameOf(token.respondent.name)} can no longer cover ${formatRange(a.startsAt, a.endsAt)}. The gap is now open.`,
               windowId: token.windowId,
               respondentId: null,
             });
@@ -367,7 +377,7 @@ export async function declineViaToken(rawToken: string): Promise<{ ok: boolean }
       windowId: token.windowId,
       respondentId: token.respondentId,
       channel: "event",
-      body: `${token.respondent.name} declined`,
+      body: `${firstNameOf(token.respondent.name)} declined`,
       status: "SENT",
     },
   });

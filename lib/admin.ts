@@ -39,6 +39,7 @@ export interface WindowSummary {
   id: string;
   status: Window["status"];
   notes: string;
+  taskTags: string[];
   startsAt: Date;
   endsAt: Date;
   activeTierIndex: number;
@@ -54,6 +55,7 @@ type WindowWithRelations = {
   id: string;
   status: Window["status"];
   notes: string;
+  taskTags: string[];
   startsAt: Date;
   endsAt: Date;
   activeTierIndex: number;
@@ -101,6 +103,7 @@ function summarize(window: WindowWithRelations): WindowSummary {
     id: window.id,
     status: window.status,
     notes: window.notes,
+    taskTags: window.taskTags,
     startsAt: window.startsAt,
     endsAt: window.endsAt,
     activeTierIndex: window.activeTierIndex,
@@ -238,7 +241,12 @@ export type EditWindowResult = { ok: true } | { ok: false; reason: string };
  */
 export async function editWindow(
   id: string,
-  { startsAt, endsAt, notes }: { startsAt: Date; endsAt: Date; notes: string },
+  {
+    startsAt,
+    endsAt,
+    notes,
+    taskTags,
+  }: { startsAt: Date; endsAt: Date; notes: string; taskTags: string[] },
 ): Promise<EditWindowResult> {
   try {
     return await prisma.$transaction(
@@ -267,7 +275,7 @@ export async function editWindow(
 
         await tx.window.update({
           where: { id },
-          data: { startsAt, endsAt, notes, currentTierDeadlineAt: newCurrentDeadline },
+          data: { startsAt, endsAt, notes, taskTags, currentTierDeadlineAt: newCurrentDeadline },
         });
 
         await tx.responseToken.updateMany({ where: { windowId: id }, data: { expiresAt: endsAt } });

@@ -48,6 +48,8 @@ model Window {
   startsAt  DateTime
   endsAt    DateTime
   notes     String       @default("")
+  // Preset non-clinical task types (lib/task-tags.ts); validated at the zod layer.
+  taskTags  String[]     @default([])
   status    WindowStatus @default(OPEN)
   // Index into the ordered `tiers` of the tier currently (and most recently) opened.
   activeTierIndex Int    @default(0)

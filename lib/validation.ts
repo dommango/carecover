@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TASK_TAGS } from "@/lib/task-tags";
 
 const localDateTime = z
   .string()
@@ -27,6 +28,7 @@ export const createWindowSchema = z
     startsAtLocal: localDateTime,
     endsAtLocal: localDateTime,
     notes: z.string().trim().max(500).default(""),
+    taskTags: z.array(z.enum(TASK_TAGS)).default([]),
     tiers: z.array(tierConfigSchema).min(1, "At least one tier is required."),
   })
   .superRefine((v, ctx) => {

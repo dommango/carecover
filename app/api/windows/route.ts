@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { createWindowSchema } from "@/lib/validation";
+import { isTaskTag } from "@/lib/task-tags";
 import { zonedWallTimeToUtc } from "@/lib/time";
 import { createWindow } from "@/lib/windows";
 import { appRedirect } from "@/lib/http";
@@ -34,6 +35,8 @@ export async function POST(request: NextRequest) {
     startsAtLocal: form.get("startsAtLocal"),
     endsAtLocal: form.get("endsAtLocal"),
     notes: form.get("notes") ?? "",
+    // Filter + dedupe here rather than letting one stray tag reject the whole form.
+    taskTags: [...new Set(form.getAll("taskTags").map(String).filter(isTaskTag))],
     tiers: parseTiers(form),
   });
 
@@ -47,6 +50,7 @@ export async function POST(request: NextRequest) {
       startsAt: zonedWallTimeToUtc(data.startsAtLocal),
       endsAt: zonedWallTimeToUtc(data.endsAtLocal),
       notes: data.notes,
+      taskTags: data.taskTags,
       tiers: data.tiers.map((t) => ({
         label: t.label,
         claimRule: t.claimRule,
